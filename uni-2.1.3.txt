@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # ============================================================
-#  uni — Universal Package Manager Wrapper v2.0.0
+#  uni — Universal Package Manager Wrapper v2.1.3
 #  Commands: uni install | uni remove | uni purge | uni list | uni update
 # ============================================================
 
 set -u
 
-UNI_VERSION="2.0.0"
+UNI_VERSION="2.1.3"
 
 if [[ -n "${SUDO_USER:-}" ]]; then
     REAL_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
@@ -18,6 +18,8 @@ UNI_REGISTRY="$REAL_HOME/.local/share/uni/installed.json"
 UNI_APPIMAGE_DIR="$REAL_HOME/.local/share/uni/appimages"
 UNI_DESKTOP_DIR="$REAL_HOME/.local/share/applications"
 UNI_ICON_DIR="$REAL_HOME/.local/share/uni/icons"
+UNI_CACHE_DIR="$REAL_HOME/.cache/uni"
+UNI_CACHE_TTL=3600  # 1 hour
 
 # ── Colors ───────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -54,13 +56,11 @@ spin_start() {
         done
     } &
     _SPIN_PID=$!
-    disown "$_SPIN_PID" 2>/dev/null || true
 }
 
 spin_stop() {
     if [[ -n "$_SPIN_PID" ]]; then
         kill "$_SPIN_PID" 2>/dev/null || true
-        wait "$_SPIN_PID" 2>/dev/null || true
         _SPIN_PID=""
         printf "\r\033[2K"
     fi
@@ -84,9 +84,29 @@ if [[ -n "${SUDO_USER:-}" ]]; then
     warn "User-level backends (Flatpak) may not be found under root's environment."
 fi
 
+# ── aria2c / parallel download helper ────────────────────────
+has_aria2c() { command -v aria2c &>/dev/null; }
+
+# download_file <url> <dest>
+# Uses aria2c with 8 parallel connections if available, falls back to curl.
+download_file() {
+    local url="$1" dest="$2"
+    if has_aria2c; then
+        aria2c -x 8 -s 8 --allow-overwrite=true \
+               -d "$(dirname "$dest")" \
+               -o "$(basename "$dest")" \
+               --console-log-level=warn \
+               --summary-interval=0 \
+               "$url" || return 1
+    else
+        curl -Lf# "$url" -o "$dest" || return 1
+    fi
+}
+
 # ── Init registry ────────────────────────────────────────────
 init_registry() {
-    mkdir -p "$(dirname "$UNI_REGISTRY")" "$UNI_APPIMAGE_DIR" "$UNI_DESKTOP_DIR" "$UNI_ICON_DIR"
+    mkdir -p "$(dirname "$UNI_REGISTRY")" "$UNI_APPIMAGE_DIR" "$UNI_DESKTOP_DIR" \
+             "$UNI_ICON_DIR" "$UNI_CACHE_DIR"
     [[ -f "$UNI_REGISTRY" ]] || echo '{}' > "$UNI_REGISTRY"
     if [[ -n "${SUDO_USER:-}" ]]; then
         chown -R "$SUDO_USER:$SUDO_USER" "$(dirname "$UNI_REGISTRY")" 2>/dev/null || true
@@ -333,12 +353,13 @@ install_from_github() {
     fi
 
     info "Downloading ${BOLD}${best_name}${RESET}..."
+    has_aria2c && info "${DIM}Using aria2c (parallel connections)${RESET}"
     local lower="${best_name,,}"
 
     if [[ "$lower" == *.deb ]]; then
         local tmp_deb
         tmp_deb=$(mktemp --suffix=.deb)
-        curl -Lf# "$best_url" -o "$tmp_deb" || { rm -f "$tmp_deb"; die "Download failed."; }
+        download_file "$best_url" "$tmp_deb" || { rm -f "$tmp_deb"; die "Download failed."; }
         install_deb "$tmp_deb"
         rm -f "$tmp_deb"
     elif [[ "$lower" == *.appimage ]]; then
@@ -358,7 +379,7 @@ install_archive() {
 
     local tmpdir
     tmpdir=$(mktemp -d)
-    curl -Lf# "$url" -o "$tmpdir/$filename" || { rm -rf "$tmpdir"; die "Download failed."; }
+    download_file "$url" "$tmpdir/$filename" || { rm -rf "$tmpdir"; die "Download failed."; }
 
     step "Extracting..."
     if [[ "$filename" == *.zip ]]; then
@@ -427,12 +448,26 @@ search_snap() {
 
 search_github() {
     local pkg="$1"
+    local cache_file="$UNI_CACHE_DIR/gh_search_${pkg}.txt"
+
+    # Return cached result if fresh enough
+    if [[ -f "$cache_file" ]]; then
+        local age=$(( $(date +%s) - $(stat -c %Y "$cache_file" 2>/dev/null || echo 0) ))
+        if (( age < UNI_CACHE_TTL )); then
+            local cached
+            cached=$(cat "$cache_file")
+            [[ -n "$cached" ]] && { echo "$cached"; return 0; } || return 1
+        fi
+    fi
+
     local json
     json=$(curl -sf --max-time 8 \
         -H "Accept: application/vnd.github+json" \
         "https://api.github.com/search/repositories?q=${pkg}+in:name&sort=stars&per_page=5" 2>/dev/null) || return 1
     [[ -z "$json" ]] && return 1
-    python3 - "$json" "$pkg" << 'PYEOF'
+
+    local result
+    result=$(python3 - "$json" "$pkg" << 'PYEOF'
 import json, sys
 data = json.loads(sys.argv[1])
 query = sys.argv[2].lower()
@@ -445,6 +480,41 @@ for item in items:
         sys.exit(0)
 print(items[0]['full_name'])
 PYEOF
+) || return 1
+
+    # Cache the result
+    mkdir -p "$UNI_CACHE_DIR"
+    echo "$result" > "$cache_file"
+    echo "$result"
+}
+
+# ── Parallel search ──────────────────────────────────────────
+# Runs apt/flatpak/snap/github searches concurrently.
+# Populates: apt_result, flatpak_result, snap_result, gh_result
+parallel_search() {
+    local pkg="$1"
+    local tmp
+    tmp=$(mktemp -d)
+
+    search_apt     "$pkg" > "$tmp/apt"     2>/dev/null &
+    local pid_apt=$!
+    search_flatpak "$pkg" > "$tmp/flatpak" 2>/dev/null &
+    local pid_flatpak=$!
+    search_snap    "$pkg" > "$tmp/snap"    2>/dev/null &
+    local pid_snap=$!
+    search_github  "$pkg" > "$tmp/gh"      2>/dev/null &
+    local pid_gh=$!
+
+    spin_start "Searching all sources in parallel..."
+    wait $pid_apt $pid_flatpak $pid_snap $pid_gh
+    spin_stop
+
+    apt_result=$(cat "$tmp/apt"     2>/dev/null || true)
+    flatpak_result=$(cat "$tmp/flatpak" 2>/dev/null || true)
+    snap_result=$(cat "$tmp/snap"   2>/dev/null || true)
+    gh_result=$(cat "$tmp/gh"       2>/dev/null || true)
+
+    rm -rf "$tmp"
 }
 
 # ── AppImage helpers ─────────────────────────────────────────
@@ -455,7 +525,9 @@ install_appimage() {
     if [[ "$src" =~ ^https?:// ]]; then
         name=$(basename "$src" | sed 's/\.AppImage$//i; s/\.appimage$//i')
         info "Downloading AppImage..."
-        curl -Lf# "$src" -o "$UNI_APPIMAGE_DIR/${name}.AppImage" || die "Failed to download AppImage"
+        has_aria2c && info "${DIM}Using aria2c (parallel connections)${RESET}"
+        download_file "$src" "$UNI_APPIMAGE_DIR/${name}.AppImage" \
+            || die "Failed to download AppImage"
         src="$UNI_APPIMAGE_DIR/${name}.AppImage"
     else
         [[ -f "$src" ]] || die "File not found: $src"
@@ -470,6 +542,7 @@ install_appimage() {
     local tmpdir
     tmpdir=$(mktemp -d)
     pushd "$tmpdir" &>/dev/null || die "mktemp failed"
+
     if "$UNI_APPIMAGE_DIR/${name}.AppImage" --appimage-extract &>/dev/null; then
         local extracted_icon
         extracted_icon=$(find squashfs-root -name "*.png" -o -name "*.svg" 2>/dev/null \
@@ -595,16 +668,21 @@ handle_already_installed() {
 }
 
 # ── Source selection menu ────────────────────────────────────
+# NOTE: called inside $(...) so all UI output must go to >&2;
+# only the final chosen value is echoed to stdout.
 select_source() {
     local pkg="$1"; shift
-    echo ""
-    echo -e "${BOLD}${BLUE}${pkg}${RESET} found in multiple sources:"
-    divider
+    echo "" >&2
+    echo -e "${BOLD}${BLUE}${pkg}${RESET} found in multiple sources:" >&2
+    divider >&2
     PS3="$(echo -e "${CYAN}${BOLD}Select source${RESET} [1-$#]: ")"
     local chosen
     select chosen in "$@"; do
-        [[ -n "$chosen" ]] && { echo "$chosen"; return; }
-        warn "Invalid choice."
+        if [[ -n "$chosen" ]]; then
+            echo "$chosen"   # stdout only — captured by caller
+            return
+        fi
+        warn "Invalid choice." >&2
     done
 }
 
@@ -649,12 +727,56 @@ resolve_flatpak_id() {
     done
 }
 
+# ── apt parallel-download install ────────────────────────────
+# Uses aria2c to pre-fetch .deb files in parallel, then hands to dpkg.
+# Falls back to plain apt if aria2c is not available.
+do_apt_install() {
+    local pkg="$1"
+    if has_aria2c; then
+        step "Resolving download URLs via apt..."
+        local urls
+        # apt-get --print-uris outputs lines like: 'url' pkg ver size checksum
+        urls=$(apt-get install --print-uris -qq "$pkg" 2>/dev/null \
+            | grep -oP "(?<=')[^']+" | grep -E '\.deb$') || true
+
+        if [[ -n "$urls" ]]; then
+            local tmpdir
+            tmpdir=$(mktemp -d)
+            step "Downloading packages in parallel (aria2c)..."
+            echo "$urls" | aria2c \
+                --input-file=- \
+                -d "$tmpdir" \
+                -j 8 \
+                --console-log-level=warn \
+                --summary-interval=0 \
+                --allow-overwrite=true 2>/dev/null
+
+            local debs=()
+            while IFS= read -r -d '' f; do
+                debs+=("$f")
+            done < <(find "$tmpdir" -name "*.deb" -print0 2>/dev/null)
+
+            if [[ ${#debs[@]} -gt 0 ]]; then
+                sudo dpkg -i "${debs[@]}" 2>/dev/null || true
+                sudo "$(apt_cmd)" -f install -y
+                rm -rf "$tmpdir"
+                return 0
+            fi
+            rm -rf "$tmpdir"
+        fi
+        # Fall through if URL extraction failed
+    fi
+
+    # Standard install
+    sudo "$(apt_cmd)" install -y "$pkg"
+}
+
 # ── Install executor ─────────────────────────────────────────
 do_install() {
     local pkg="$1" chosen_source="$2"
     case "$chosen_source" in
         apt)
-            sudo "$(apt_cmd)" install -y "$pkg"
+            do_apt_install "$pkg"
             registry_add "$pkg" "apt" "$pkg"
             success "Installed ${BOLD}${pkg}${RESET} via $(apt_cmd)"
             ;;
@@ -698,7 +820,8 @@ cmd_install() {
             local tmp_deb
             tmp_deb=$(mktemp --suffix=.deb)
             info "Downloading .deb..."
-            curl -Lf# "$pkg" -o "$tmp_deb" || { rm -f "$tmp_deb"; die "Download failed."; }
+            has_aria2c && info "${DIM}Using aria2c (parallel connections)${RESET}"
+            download_file "$pkg" "$tmp_deb" || { rm -f "$tmp_deb"; die "Download failed."; }
             install_deb "$tmp_deb"
             rm -f "$tmp_deb"
         else
@@ -733,7 +856,8 @@ cmd_install() {
                 info "Reinstalling ${BOLD}${pkg}${RESET} from ${pb}..."
                 case "$pb" in
                     apt)
-                        sudo "$(apt_cmd)" install --reinstall -y "$pkg"
+                        do_apt_install "$pkg" --reinstall 2>/dev/null \
+                            || sudo "$(apt_cmd)" install --reinstall -y "$pkg"
                         registry_add "$pkg" "apt" "$pkg"
                         success "Reinstalled ${BOLD}${pkg}${RESET}"
                         ;;
@@ -748,6 +872,7 @@ cmd_install() {
                         ;;
                     snap)
                         sudo snap refresh "$pkg" || sudo snap install "$pkg"
+                        registry_add "$pkg" "snap" "$pkg"
                         success "Reinstalled ${BOLD}${pkg}${RESET}"
                         ;;
                     dpkg|archive|appimage)
@@ -765,26 +890,11 @@ cmd_install() {
         esac
     fi
 
-    # Search backends sequentially with spinners
-    local sources=()
+    # Parallel search across all backends
     local apt_result="" flatpak_result="" snap_result="" gh_result=""
+    parallel_search "$pkg"
 
-    spin_start "Searching apt..."
-    apt_result=$(search_apt "$pkg" 2>/dev/null) || true
-    spin_stop
-
-    spin_start "Searching flatpak..."
-    flatpak_result=$(search_flatpak "$pkg" 2>/dev/null) || true
-    spin_stop
-
-    spin_start "Searching snap..."
-    snap_result=$(search_snap "$pkg" 2>/dev/null) || true
-    spin_stop
-
-    spin_start "Searching GitHub..."
-    gh_result=$(search_github "$pkg" 2>/dev/null) || true
-    spin_stop
-
+    local sources=()
     [[ -n "$apt_result"     ]] && ! in_array "apt"     "${exclude_sources[@]:-}" && sources+=("apt")
     [[ -n "$flatpak_result" ]] && ! in_array "flatpak" "${exclude_sources[@]:-}" && sources+=("flatpak")
     [[ -n "$snap_result"    ]] && ! in_array "snap"    "${exclude_sources[@]:-}" && sources+=("snap")
@@ -929,22 +1039,33 @@ cmd_update() {
     init_registry
     header "Updating all backends"
 
+    # apt must run first and interactively (needs tty for sudo prompt)
     if has_apt; then
-        info "apt / nala..."
+        info "$(apt_cmd)..."
         sudo "$(apt_cmd)" update && sudo "$(apt_cmd)" upgrade -y
         echo ""
     fi
 
+    # flatpak and snap are user-level — run in parallel
+    local fp_pid="" snap_pid=""
+
     if has_flatpak; then
-        info "Flatpak..."
-        flatpak update --noninteractive -y
-        echo ""
+        info "Flatpak... ${DIM}(background)${RESET}"
+        flatpak update --noninteractive -y &
+        fp_pid=$!
     fi
 
     if has_snap; then
-        info "Snap..."
-        sudo snap refresh
-        echo ""
+        info "Snap... ${DIM}(background)${RESET}"
+        sudo snap refresh &
+        snap_pid=$!
+    fi
+
+    if [[ -n "$fp_pid" ]]; then
+        wait "$fp_pid" && success "Flatpak updated." || warn "Flatpak update encountered errors."
+    fi
+    if [[ -n "$snap_pid" ]]; then
+        wait "$snap_pid" && success "Snap updated." || warn "Snap update encountered errors."
     fi
 
     success "All backends updated."
@@ -969,6 +1090,7 @@ cmd_help() {
     echo -e "  ${BOLD}uni update${RESET}                       Update all backends"
     divider
     echo -e "  ${DIM}Backends: $(apt_cmd) · flatpak · snap · dpkg · appimage · github · archive${RESET}"
+    echo -e "  ${DIM}Optional: aria2c (parallel downloads) — sudo apt install aria2${RESET}"
     echo ""
 }
 

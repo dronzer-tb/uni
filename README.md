@@ -1,21 +1,23 @@
-# UNI — Universal Package Manager Wrapper v2.0.0
+# UNI — Universal Package Manager Wrapper v2.1.3
 
 A unified command interface for installing, managing, and updating software across different package management backends on Linux.
 
 ## Overview
 
-**UNI** abstracts away the complexity of managing packages from multiple sources—APT, Flatpak, and GitHub releases—through a single, consistent command structure. Whether you're installing from system repositories, Flatpak remotes, or downloading the latest release from GitHub, UNI handles asset selection, installation, and registry management automatically.
+**UNI** abstracts away the complexity of managing packages from multiple sources—APT, Flatpak, Snap, and GitHub releases—through a single, consistent command structure. Whether you're installing from system repositories, sandboxed app stores, or downloading the latest release from GitHub, UNI handles asset selection, installation, and registry management automatically.
 
 ### Key Features
 
-**Unified Interface** — One command for all package sources  
-**Smart Asset Detection** — Automatically selects the best binary for your system architecture  
-**Multiple Backends** — APT (system packages), Flatpak (sandboxed apps), and GitHub releases  
-**Central Registry** — Track installed packages across all backends  
-**Complete Removal** — Purge packages and all associated data  
-**GitHub Integration** — Download and install latest releases with minimal input  
-**Lightweight & Fast** — Minimal dependencies (bash, python3, curl)  
-**User-Level Installation** — Works without requiring sudo for most operations  
+✨ **Unified Interface** — One command for all package sources  
+🎯 **Smart Asset Detection** — Automatically selects the best binary for your system architecture  
+📦 **Multiple Backends** — APT, Flatpak, Snap, and GitHub releases  
+🔍 **Parallel Search** — Search across all backends simultaneously for packages  
+⚡ **Cached Results** — 1-hour TTL cache for GitHub searches to reduce API calls  
+🚀 **Parallel Downloads** — Optional aria2c support for faster multi-connection downloads  
+🔄 **Central Registry** — Track installed packages across all backends  
+🧹 **Complete Removal** — Purge packages and all associated data  
+🌐 **GitHub Integration** — Download and install latest releases with minimal input  
+💾 **Lightweight & Fast** — Minimal dependencies (bash, python3, curl)  
 
 ---
 
@@ -25,8 +27,8 @@ Clone the repository and link the script to your PATH:
 
 ```bash
 git clone https://github.com/dronzer-tb/UNI
-chmod +x ~/uni/uni-v2.0.0.txt
-ln -s ~/uni/uni-v2.0.0.txt ~/.local/bin/uni
+chmod +x ~/uni/uni-2.1.3.txt
+ln -s ~/uni/uni-2.1.3.txt ~/.local/bin/uni
 ```
 
 Ensure `~/.local/bin` is in your `$PATH`:
@@ -41,7 +43,8 @@ export PATH="$PATH:$HOME/.local/bin"
 - **python3** — v3.6+
 - **curl** — for downloading files
 
-Optional for GitHub integration:
+Optional for enhanced performance and GitHub integration:
+- **aria2c** — parallel download support (up to 8 connections)
 - **gh** — GitHub CLI (recommended for release fetching)
 
 ---
@@ -53,6 +56,9 @@ Optional for GitHub integration:
 ```bash
 # Install a package
 uni install <package>
+
+# Search for a package across all backends
+uni search <package>
 
 # List installed packages
 uni list
@@ -82,6 +88,12 @@ uni install firefox
 
 ```bash
 uni install flatpak:org.gnome.Calendar
+```
+
+#### Snap
+
+```bash
+uni install snap:code
 ```
 
 #### GitHub Release
@@ -130,11 +142,14 @@ UNI organizes installed packages and metadata in user-level directories:
 ├── appimages/              # Cached AppImage files
 ├── icons/                  # Package icons for desktop integration
 └── applications/           # Desktop entry files
+
+~/.cache/uni/
+└── gh_search_<pkg>.txt    # Cached GitHub search results (1-hour TTL)
 ```
 
 Each entry in `installed.json` tracks:
 - Package name
-- Installation backend
+- Installation backend (apt, flatpak, snap, github)
 - Package ID or path
 - Installation timestamp
 
@@ -144,19 +159,39 @@ Each entry in `installed.json` tracks:
 
 ### `uni install <PACKAGE>`
 
-Install a package from the appropriate backend.
+Install a package from the appropriate backend or search across all backends.
 
 **Syntax:**
-- `uni install <name>` — Install from APT (system default)
+- `uni install <name>` — Search and install from best-matched backend
 - `uni install flatpak:<id>` — Install a Flatpak app (e.g., `org.kde.Dolphin`)
+- `uni install snap:<name>` — Install a Snap app (e.g., `code`)
 - `uni install github:<owner>/<repo>` — Install from GitHub release
 
 **Example:**
 ```bash
-uni install vlc                              # Install VLC via APT
+uni install vlc                              # Search all backends for VLC
 uni install flatpak:com.spotify.Client       # Install Spotify Flatpak
+uni install snap:code                        # Install VS Code as Snap
 uni install github:cli/cli                   # Install GitHub CLI from latest release
 ```
+
+### `uni search <PACKAGE>`
+
+Search for a package across all available backends in parallel.
+
+**Example:**
+```bash
+uni search vlc
+uni search python
+```
+
+Searches simultaneously in:
+- APT repositories
+- Flatpak remote catalog
+- Snap store
+- GitHub repositories (with smart ranking by stars)
+
+Results are cached for 1 hour to minimize API requests.
 
 ### `uni list [BACKEND]`
 
@@ -167,6 +202,7 @@ List installed packages. Optionally filter by backend.
 uni list                    # Show all installed packages
 uni list apt                # Show APT packages only
 uni list flatpak            # Show Flatpak packages only
+uni list snap               # Show Snap packages only
 uni list github             # Show GitHub-installed packages
 ```
 
@@ -228,10 +264,19 @@ uni install flatpak:com.obsproject.Studio
 
 Browse available Flatpak apps at [flathub.org](https://flathub.org)
 
+### Snap
+
+Installs universal Linux applications with automatic updates. Great for tools and applications across different Linux distributions.
+
+```bash
+uni install snap:code
+uni install snap:vlc
+```
+
 ### GitHub
 
 Automatically downloads and installs the latest release from any GitHub repository. UNI handles:
-- Release fetching
+- Release fetching (with smart caching)
 - Asset scoring and selection
 - Binary extraction and placement
 - Desktop integration (where applicable)
@@ -311,7 +356,7 @@ Control UNI behavior with environment variables:
 
 ```
 uni/
-├── uni-v2.0.0.txt          # Main executable
+├── uni-2.1.3.txt            # Main executable
 ├── README.md                # This file
 └── LICENSE                  # GPL v3
 ```
@@ -319,3 +364,4 @@ uni/
 ### License
 
 This project is licensed under the **GNU General Public License v3.0**. See [LICENSE](LICENSE) for details.
+
