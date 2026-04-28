@@ -2,7 +2,7 @@
 
 > **One command to rule them all:** `uni install htop` instead of `apt install`, `snap install`, or `flatpak install`
 
-![Version](https://img.shields.io/badge/version-2.2.0-blue)
+![Version](https://img.shields.io/badge/version-2.2.1-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Platform](https://img.shields.io/badge/platform-Linux-lightgrey)
 
@@ -15,7 +15,7 @@
 ### Installation (One-Liner)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOUR_USER/YOUR_REPO/main/installer.sh | bash
+curl -fsSL https://raw.githubusercontent.com/dronzer-tb/UNI/refs/heads/master/installer.sh | bash
 ```
 
 This single command will:

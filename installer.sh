@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # ============================================================
 #  uni — installer (with built-in tutorial)
-#  Usage: curl -fsSL https://raw.githubusercontent.com/YOUR/REPO/main/installer.sh | bash
+#  Usage: curl -fsSL https://raw.githubusercontent.com/dronzer-tb/UNI/refs/heads/master/installer.sh | bash
 #
 #  ⚠️  DISCLAIMER: This code was improved with the help of AI
 #  ============================================================
 
 set -euo pipefail
 
-UNI_VERSION="2.2.0"
-UNI_RAW_URL="https://raw.githubusercontent.com/YOUR_USER/YOUR_REPO/main/uni"
+UNI_VERSION="2.2.1"
+UNI_RAW_URL="https://raw.githubusercontent.com/dronzer-tb/UNI/refs/heads/master/uni"
 INSTALL_DIR="$HOME/.local/bin"
 INSTALL_PATH="$INSTALL_DIR/uni"
 

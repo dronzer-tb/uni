@@ -3,18 +3,18 @@
 #  uni — Single-line installer (minimal & memorable)
 #  Copy-paste into terminal:
 #
-#  bash <(curl -fsSL https://raw.githubusercontent.com/YOUR_USER/YOUR_REPO/main/uni-install)
+#  bash <(curl -fsSL https://raw.githubusercontent.com/dronzer-tb/UNI/refs/heads/master/uni-install)
 #
 #  Even shorter (if you prefer):
-#  curl -fsSL https://raw.githubusercontent.com/YOUR_USER/YOUR_REPO/main/uni-install | bash
+#  curl -fsSL https://raw.githubusercontent.com/dronzer-tb/UNI/refs/heads/master/uni-install | bash
 #
 #  ⚠️  DISCLAIMER: Code improved with AI help
 #  ============================================================
 
 set -euo pipefail
 
-UNI_VERSION="2.2.0"
-UNI_REPO="${UNI_REPO:-YOUR_USER/YOUR_REPO}"
+UNI_VERSION="2.2.1"
+UNI_REPO="${UNI_REPO:-dronzer-tb/UNI}"
 INSTALL_DIR="$HOME/.local/bin"
 INSTALL_PATH="$INSTALL_DIR/uni"
 
@@ -41,7 +41,7 @@ command -v curl &>/dev/null || _die "curl required"
 # Install
 mkdir -p "$INSTALL_DIR"
 _info "Installing..."
-curl -Lf# "https://raw.githubusercontent.com/${UNI_REPO}/main/uni" -o "$INSTALL_PATH" || _die "Download failed"
+curl -Lf# "https://raw.githubusercontent.com/dronzer-tb/UNI/refs/heads/master/uni" -o "$INSTALL_PATH" || _die "Download failed"
 chmod +x "$INSTALL_PATH"
 
 # Add to PATH

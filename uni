@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-#  uni — Universal Package Manager Wrapper v2.2.0
+#  uni — Universal Package Manager Wrapper v2.2.1
 #  Commands: uni install | uni remove | uni purge | uni list
 #            uni update  | uni self-update | uni intercept
 #            uni help | uni version
@@ -11,9 +11,9 @@
 
 set -u
 
-UNI_VERSION="2.2.0"
-UNI_REPO="YOUR_USER/YOUR_REPO"   # ← set this to your GitHub repo
-UNI_RAW_URL="https://raw.githubusercontent.com/${UNI_REPO}/main/uni"
+UNI_VERSION="2.2.1"
+UNI_REPO="dronzer-tb/UNI"   # ← set this to your GitHub repo
+UNI_RAW_URL="https://raw.githubusercontent.com/dronzer-tb/UNI/refs/heads/master/uni"
 
 if [[ -n "${SUDO_USER:-}" ]]; then
     REAL_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)

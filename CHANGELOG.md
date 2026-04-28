@@ -2,6 +2,12 @@
 
 All notable changes to uni are documented in this file.
 
+## [2.2.1] — 2026-04-28
+
+### Updated
+- Repository URL to use master branch: https://raw.githubusercontent.com/dronzer-tb/UNI/refs/heads/master/
+- Version bumped to v2.2.1
+
 ## [2.2.0] — 2024-01-20
 
 ### Added
@@ -86,6 +92,7 @@ This project follows [Semantic Versioning](https://semver.org/):
 For detailed information about changes, see git history or GitHub releases.
 
 ---
+[2.2.1]: https://github.com/dronzer-tb/UNI/releases/tag/v2.2.1
 [2.2.0]: https://github.com/dronzer-tb/uni/releases/tag/v2.2.0
 [2.1.3]: https://github.com/dronzer-tb/uni/releases/tag/v2.1.3
 [2.0.0]: https://github.com/dronzer-tb/uni/releases/tag/v2.0.0
