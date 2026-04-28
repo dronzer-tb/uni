@@ -29,7 +29,28 @@ success() { echo -e "${GREEN}${BOLD} ✓ ${RESET} $*"; }
 warn()    { echo -e "${YELLOW}${BOLD} ! ${RESET} $*"; }
 die()     { echo -e "${RED}${BOLD} ✗ ${RESET} $*" >&2; exit 1; }
 header()  { echo ""; echo -e "${BOLD}${BLUE}$*${RESET}"; echo -e "${DIM}────────────────────────────────────────${RESET}"; }
-pause()   { read -rsp "$(echo -e "  ${DIM}Press Enter to continue...${RESET}")" && echo ""; }
+pause() {
+    if [[ ! -r /dev/tty ]]; then
+        return 0
+    fi
+    read -r -s -p "$(echo -e "  ${DIM}Press Enter to continue...${RESET}")" < /dev/tty
+    echo ""
+}
+
+confirm_install() {
+    local confirm=""
+    if [[ ! -r /dev/tty ]]; then
+        die "No interactive terminal found. Please run installer from a terminal."
+    fi
+    read -r -p "$(echo -e "${CYAN}${BOLD}Proceed with installation? [y/N]:${RESET} ")" confirm < /dev/tty
+    case "${confirm,,}" in
+        y|yes) ;;
+        *)
+            warn "Installation cancelled."
+            exit 0
+            ;;
+    esac
+}
 
 # ── Banner ───────────────────────────────────────────────────
 echo ""
@@ -49,6 +70,21 @@ case "$ARCH" in
     x86_64|aarch64|armv7l) ;;
     *) warn "Untested architecture: ${ARCH}. Proceeding anyway." ;;
 esac
+
+# ── Disclaimer + consent ──────────────────────────────────────
+echo -e "${DIM}────────────────────────────────────────${RESET}"
+echo -e "${YELLOW}${BOLD} ⚠️  DISCLAIMER${RESET}"
+echo -e "${DIM}This installation script and uni codebase have been"
+echo -e "improved with the help of AI assistance. The original code"
+echo -e "has been enhanced for better UX, features, and reliability.${RESET}"
+echo ""
+echo -e "  ${BOLD}This will:${RESET}"
+echo -e "  ${DIM}• install uni to ${INSTALL_PATH}${RESET}"
+echo -e "  ${DIM}• create ~/.local/share/uni and ~/.cache/uni${RESET}"
+echo -e "  ${DIM}• update PATH in your shell config (if needed)${RESET}"
+echo -e "${DIM}────────────────────────────────────────${RESET}"
+confirm_install
+echo ""
 
 # ── Dependency check & install ───────────────────────────────
 info "Checking dependencies..."
@@ -248,13 +284,4 @@ echo -e "  ${CYAN}\$ source ~/.bashrc${RESET}  ${DIM}(or ~/.zshrc)${RESET}"
 echo ""
 echo -e "  ${DIM}To run the tutorial again:${RESET}"
 echo -e "  ${CYAN}\$ uni tutorial${RESET}"
-echo ""
-
-# ── AI Disclaimer ────────────────────────────────────────────
-echo -e "${DIM}────────────────────────────────────────${RESET}"
-echo -e "${YELLOW}${BOLD} ⚠️  DISCLAIMER${RESET}"
-echo -e "${DIM}This installation script and uni codebase have been"
-echo -e "improved with the help of AI assistance. The original code"
-echo -e "has been enhanced for better UX, features, and reliability.${RESET}"
-echo -e "${DIM}────────────────────────────────────────${RESET}"
 echo ""
