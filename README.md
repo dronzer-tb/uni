@@ -2,7 +2,7 @@
 
 > **One command to rule them all:** `uni install htop` instead of `apt install`, `snap install`, or `flatpak install`
 
-![Version](https://img.shields.io/badge/version-2.2.1-blue)
+![Version](https://img.shields.io/badge/version-2.3.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Platform](https://img.shields.io/badge/platform-Linux-lightgrey)
 
@@ -80,6 +80,9 @@ uni update
 # Update uni itself
 uni self-update
 uni --update
+
+# Uninstall uni completely
+uni uninstall
 
 # Check version
 uni version

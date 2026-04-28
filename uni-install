@@ -13,7 +13,7 @@
 
 set -euo pipefail
 
-UNI_VERSION="2.2.1"
+UNI_VERSION="2.3.0"
 UNI_REPO="${UNI_REPO:-dronzer-tb/UNI}"
 INSTALL_DIR="$HOME/.local/bin"
 INSTALL_PATH="$INSTALL_DIR/uni"
@@ -38,25 +38,53 @@ echo ""
 command -v python3 &>/dev/null || _die "python3 required"
 command -v curl &>/dev/null || _die "curl required"
 
+# ── DISCLAIMER & CONFIRMATION ────────────────────────────────
+echo -e "${YELLOW}${BOLD}⚠️  DISCLAIMER${RESET}"
+echo -e "${DIM}This installation script and uni codebase have been"
+echo -e "improved with the help of AI assistance. The original code"
+echo -e "has been enhanced for better UX, features, and reliability.${RESET}"
+echo ""
+echo -e "${BOLD}What will be installed:${RESET}"
+echo -e "  ${DIM}• uni binary → ${INSTALL_PATH}${RESET}"
+echo -e "  ${DIM}• Config dir → $HOME/.local/share/uni/${RESET}"
+echo -e "  ${DIM}• Cache dir → $HOME/.cache/uni/${RESET}"
+echo -e "  ${DIM}• PATH updated in shell configs${RESET}"
+echo ""
+
+read -p "$(echo -e "${CYAN}${BOLD}Do you want to proceed? [y/N]:${RESET} ")" -r confirm
+if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+    echo -e "${YELLOW}Installation cancelled.${RESET}"
+    exit 0
+fi
+
+echo ""
+
 # Install
 mkdir -p "$INSTALL_DIR"
-_info "Installing..."
+_info "Downloading uni..."
 curl -Lf# "https://raw.githubusercontent.com/dronzer-tb/UNI/refs/heads/master/uni" -o "$INSTALL_PATH" || _die "Download failed"
 chmod +x "$INSTALL_PATH"
+_ok "Downloaded"
 
 # Add to PATH
 if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
+    _info "Updating PATH in shell configs..."
     for rc in ~/.bashrc ~/.zshrc ~/.bash_profile ~/.zprofile; do
         [[ -f "$rc" ]] && ! grep -q "\.local/bin" "$rc" && echo "" >> "$rc" && echo "export PATH=\"\$HOME/.local/bin:\$PATH\"  # uni" >> "$rc"
     done
+    _ok "PATH updated"
 fi
 
 # Init
+_info "Initializing uni..."
 mkdir -p "$HOME/.local/share/uni" "$HOME/.cache/uni"
 echo '{}' > "$HOME/.local/share/uni/installed.json" 2>/dev/null || true
+_ok "Ready"
 
-_ok "Done! Run: uni tutorial"
-_ok "Reload shell: source ~/.bashrc"
 echo ""
-echo -e "${YELLOW}${BOLD}⚠️  DISCLAIMER${RESET}${DIM}: Code improved with AI help${RESET}"
+_ok "Installation complete!"
+echo ""
+echo -e "  ${DIM}Next steps:${RESET}"
+echo -e "  ${CYAN}\$ source ~/.bashrc${RESET}  ${DIM}(reload your shell)${RESET}"
+echo -e "  ${CYAN}\$ uni tutorial${RESET}      ${DIM}(learn how to use uni)${RESET}"
 echo ""

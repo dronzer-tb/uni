@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ============================================================
-#  uni — Universal Package Manager Wrapper v2.2.1
+#  uni — Universal Package Manager Wrapper v2.3.0
 #  Commands: uni install | uni remove | uni purge | uni list
 #            uni update  | uni self-update | uni intercept
-#            uni help | uni version
+#            uni uninstall | uni help | uni version
 #
 #  📚 Tutorial moved to installer.sh (run after installation)
 #  ⚠️  Code improved with AI assistance
@@ -11,7 +11,7 @@
 
 set -u
 
-UNI_VERSION="2.2.1"
+UNI_VERSION="2.3.0"
 UNI_REPO="dronzer-tb/UNI"   # ← set this to your GitHub repo
 UNI_RAW_URL="https://raw.githubusercontent.com/dronzer-tb/UNI/refs/heads/master/uni"
 
@@ -1168,6 +1168,63 @@ cmd_update() {
     success "All backends updated."
 }
 
+# ── UNINSTALL ────────────────────────────────────────────────
+cmd_uninstall() {
+    header "uni uninstall"
+    
+    warn "This will completely remove uni and its data."
+    echo ""
+    echo -e "  ${DIM}Directories that will be removed:${RESET}"
+    echo -e "  ${DIM}• uni binary${RESET}"
+    echo -e "  ${DIM}• $HOME/.local/share/uni/  (registry, appimages, icons)${RESET}"
+    echo -e "  ${DIM}• $HOME/.cache/uni/  (cache)${RESET}"
+    echo -e "  ${DIM}• PATH entries in shell configs${RESET}"
+    echo ""
+    echo -e "  ${BOLD}Packages installed via uni will ${CYAN}NOT${RESET}${BOLD} be removed.${RESET}"
+    echo ""
+    
+    read -p "$(echo -e "${RED}${BOLD}Uninstall uni? Type 'yes' to confirm:${RESET} ")" -r confirm
+    if [[ "$confirm" != "yes" ]]; then
+        warn "Uninstall cancelled."
+        return 1
+    fi
+    
+    echo ""
+    info "Removing uni..."
+    
+    local uni_path
+    uni_path=$(command -v uni 2>/dev/null || echo "$REAL_HOME/.local/bin/uni")
+    
+    # Remove binary
+    if [[ -f "$uni_path" ]]; then
+        rm -f "$uni_path" && success "Removed: $uni_path" || warn "Could not remove $uni_path"
+    fi
+    
+    # Remove uni directories
+    if [[ -d "$REAL_HOME/.local/share/uni" ]]; then
+        rm -rf "$REAL_HOME/.local/share/uni" && success "Removed: $REAL_HOME/.local/share/uni/" || warn "Could not remove uni data"
+    fi
+    
+    if [[ -d "$REAL_HOME/.cache/uni" ]]; then
+        rm -rf "$REAL_HOME/.cache/uni" && success "Removed: $REAL_HOME/.cache/uni/" || warn "Could not remove cache"
+    fi
+    
+    # Remove PATH entries from shell configs
+    for rc_file in ~/.bashrc ~/.zshrc ~/.bash_profile ~/.zprofile; do
+        if [[ -f "$rc_file" ]]; then
+            if grep -q "\.local/bin.*# uni" "$rc_file"; then
+                sed -i '/\.local\/bin.*# uni/d' "$rc_file"
+                success "Updated: $rc_file"
+            fi
+        fi
+    done
+    
+    echo ""
+    success "uni has been completely removed."
+    echo -e "  ${DIM}Run: ${CYAN}source ~/.bashrc${RESET}${DIM} to update your shell${RESET}"
+    echo ""
+}
+
 # ── SELF-UPDATE ──────────────────────────────────────────────
 cmd_self_update() {
     header "uni self-update"
@@ -1176,16 +1233,17 @@ cmd_self_update() {
     self_path=$(command -v uni 2>/dev/null || echo "$REAL_HOME/.local/bin/uni")
 
     info "Checking latest version..."
-    local latest_json
+    local latest_json latest_ver
+    
     latest_json=$(curl -sf --max-time 10 \
         -H "Accept: application/vnd.github+json" \
         "https://api.github.com/repos/${UNI_REPO}/releases/latest" 2>/dev/null) \
         || die "Could not reach GitHub. Check your connection."
 
-    local latest_ver
-    latest_ver=$(python3 -c "import json,sys; d=json.loads(sys.argv[1]); print(d.get('tag_name','').lstrip('v'))" \
+    latest_ver=$(python3 -c "import json,sys; d=json.loads(sys.argv[1]); tag=d.get('tag_name',''); print(tag.lstrip('v') if tag else '')" \
         "$latest_json" 2>/dev/null || echo "")
-    [[ -z "$latest_ver" ]] && die "Could not determine latest version."
+    
+    [[ -z "$latest_ver" ]] && die "Could not determine latest version from GitHub."
 
     if ! version_gt "$latest_ver" "$UNI_VERSION"; then
         success "Already up to date (v${UNI_VERSION})."
@@ -1206,15 +1264,23 @@ cmd_self_update() {
     fi
 
     chmod +x "$tmp"
-    mv "$tmp" "$self_path" \
-        || { sudo mv "$tmp" "$self_path"; } \
-        || { rm -f "$tmp"; die "Could not write to ${self_path}. Try: sudo uni self-update"; }
+    
+    # Try to write directly, if that fails (permissions), try with sudo
+    if ! mv "$tmp" "$self_path" 2>/dev/null; then
+        if sudo -n true 2>/dev/null; then
+            sudo mv "$tmp" "$self_path" || { rm -f "$tmp"; die "Could not write to ${self_path}. Try: sudo uni self-update"; }
+        else
+            rm -f "$tmp"
+            die "Permission denied: ${self_path}. Try: sudo uni self-update"
+        fi
+    fi
 
     # Bust the update-check cache so the banner doesn't linger
     rm -f "$UNI_CACHE_DIR/latest_version.txt"
 
     success "uni updated to v${latest_ver}"
 }
+
 
 # ── INTERCEPT ────────────────────────────────────────────────
 # Writes shell functions to the user's rc file that wrap apt/nala/snap/flatpak
@@ -1345,11 +1411,12 @@ cmd_help() {
     echo -e "  ${BOLD}uni install${RESET} <url.AppImage>           Download & install AppImage"
     echo -e "  ${BOLD}uni remove${RESET}  <package>                Remove (keep config)"
     echo -e "  ${BOLD}uni purge${RESET}   <package>                Remove + all config/data"
-    echo -e "  ${BOLD}uni list${RESET}                             List uni-managed packages"
+        echo -e "  ${BOLD}uni list${RESET}                             List uni-managed packages"
     echo -e "  ${BOLD}uni update${RESET}                           Update all backends"
     echo -e "  ${BOLD}uni self-update${RESET}                      Update uni itself"
+    echo -e "  ${BOLD}uni uninstall${RESET}                        Remove uni completely"
     echo -e "  ${BOLD}uni intercept${RESET} [on|off|status]        Route apt/snap/flatpak through uni"
-        echo -e "  ${BOLD}uni version${RESET}                          Print version"
+    echo -e "  ${BOLD}uni version${RESET}                          Print version"
     divider
     echo -e "  ${DIM}--source values: apt  flatpak  snap  github${RESET}"
     echo -e "  ${DIM}Backends: $(apt_cmd) · flatpak · snap · dpkg · appimage · github · archive${RESET}"
@@ -1371,6 +1438,7 @@ main() {
         list)                   cmd_list ;;
         update)                 cmd_update ;;
         self-update|--update)   cmd_self_update ;;
+        uninstall)              cmd_uninstall ;;
         intercept)              cmd_intercept "$@" ;;
         
         version|--version|-V)   echo "uni v${UNI_VERSION}" ;;
