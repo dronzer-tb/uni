@@ -1,12 +1,19 @@
 #!/usr/bin/env bash
 # ============================================================
-#  uni — Universal Package Manager Wrapper v2.1.3
-#  Commands: uni install | uni remove | uni purge | uni list | uni update
+#  uni — Universal Package Manager Wrapper v2.2.0
+#  Commands: uni install | uni remove | uni purge | uni list
+#            uni update  | uni self-update | uni intercept
+#            uni help | uni version
+#
+#  📚 Tutorial moved to installer.sh (run after installation)
+#  ⚠️  Code improved with AI assistance
 # ============================================================
 
 set -u
 
-UNI_VERSION="2.1.3"
+UNI_VERSION="2.2.0"
+UNI_REPO="YOUR_USER/YOUR_REPO"   # ← set this to your GitHub repo
+UNI_RAW_URL="https://raw.githubusercontent.com/${UNI_REPO}/main/uni"
 
 if [[ -n "${SUDO_USER:-}" ]]; then
     REAL_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
@@ -19,7 +26,8 @@ UNI_APPIMAGE_DIR="$REAL_HOME/.local/share/uni/appimages"
 UNI_DESKTOP_DIR="$REAL_HOME/.local/share/applications"
 UNI_ICON_DIR="$REAL_HOME/.local/share/uni/icons"
 UNI_CACHE_DIR="$REAL_HOME/.cache/uni"
-UNI_CACHE_TTL=3600  # 1 hour
+UNI_CACHE_TTL=3600          # 1 hour for search cache
+UNI_UPDATE_CHECK_TTL=86400  # 24 hours for update-notifier check
 
 # ── Colors ───────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -87,8 +95,6 @@ fi
 # ── aria2c / parallel download helper ────────────────────────
 has_aria2c() { command -v aria2c &>/dev/null; }
 
-# download_file <url> <dest>
-# Uses aria2c with 8 parallel connections if available, falls back to curl.
 download_file() {
     local url="$1" dest="$2"
     if has_aria2c; then
@@ -199,8 +205,66 @@ arch_patterns() {
     esac
 }
 
-# ── GitHub integration ───────────────────────────────────────
+# ── Version comparison ───────────────────────────────────────
+# Returns 0 if $1 > $2 (semver)
+version_gt() {
+    python3 -c "
+import sys
+a = tuple(int(x) for x in sys.argv[1].lstrip('v').split('.'))
+b = tuple(int(x) for x in sys.argv[2].lstrip('v').split('.'))
+sys.exit(0 if a > b else 1)
+" "$1" "$2" 2>/dev/null
+}
 
+# ── Update notifier ──────────────────────────────────────────
+# Runs a background check once per day. If a newer version is found,
+# prints a banner at the end of the current command.
+_UPDATE_BANNER=""
+
+check_for_update() {
+    mkdir -p "$UNI_CACHE_DIR"
+    local cache_file="$UNI_CACHE_DIR/latest_version.txt"
+    local now
+    now=$(date +%s)
+
+    # Refresh cache if stale
+    local cached_age=99999
+    if [[ -f "$cache_file" ]]; then
+        cached_age=$(( now - $(stat -c %Y "$cache_file" 2>/dev/null || echo 0) ))
+    fi
+
+    if (( cached_age >= UNI_UPDATE_CHECK_TTL )); then
+        # Background fetch — doesn't block the user
+        {
+            local latest
+            latest=$(curl -sf --max-time 6 \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/${UNI_REPO}/releases/latest" 2>/dev/null \
+                | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('tag_name','').lstrip('v'))" 2>/dev/null || true)
+            [[ -n "$latest" ]] && echo "$latest" > "$cache_file"
+        } &
+        disown $! 2>/dev/null || true
+        return
+    fi
+
+    # Read cached version and compare
+    local latest_ver
+    latest_ver=$(cat "$cache_file" 2>/dev/null | tr -d '[:space:]')
+    [[ -z "$latest_ver" ]] && return
+
+    if version_gt "$latest_ver" "$UNI_VERSION"; then
+        _UPDATE_BANNER="${YELLOW}${BOLD}  ╔══════════════════════════════════════════╗
+  ║  uni ${latest_ver} is available  (you have ${UNI_VERSION})  ║
+  ║  Run: uni self-update                    ║
+  ╚══════════════════════════════════════════╝${RESET}"
+    fi
+}
+
+print_update_banner() {
+    [[ -n "$_UPDATE_BANNER" ]] && echo -e "\n$_UPDATE_BANNER"
+}
+
+# ── GitHub integration ───────────────────────────────────────
 parse_github_repo() {
     local input="$1"
     if [[ "$input" =~ ^https?://github\.com/([^/]+/[^/]+) ]]; then
@@ -225,14 +289,12 @@ score_asset() {
     local name="${1,,}"
     local score=0
 
-    # Arch matching
     for pat in $(arch_patterns); do
         if [[ "$name" == *"${pat,,}"* ]]; then
             score=$((score + 50)); break
         fi
     done
 
-    # Penalize other arches
     local other_arches="x86_64 amd64 x64 aarch64 arm64 armv7l armhf i386 i686"
     for pat in $other_arches; do
         local is_ours=0
@@ -243,30 +305,27 @@ score_asset() {
         [[ "$name" == *"${pat,,}"* ]] && score=$((score - 200))
     done
 
-    # Format preference
     [[ "$name" == *.deb      ]] && score=$((score + 40))
     [[ "$name" == *.appimage ]] && score=$((score + 30))
     [[ "$name" == *.tar.gz   ]] && score=$((score + 10))
     [[ "$name" == *.tar.xz   ]] && score=$((score + 10))
     [[ "$name" == *.zip      ]] && score=$((score + 5))
     [[ "$name" == *linux*    ]] && score=$((score + 20))
-
-    # Penalize checksums, debug, non-linux
-    [[ "$name" == *.sha256  ]] && score=$((score - 500))
-    [[ "$name" == *.sha512  ]] && score=$((score - 500))
-    [[ "$name" == *.asc     ]] && score=$((score - 500))
-    [[ "$name" == *source*  ]] && score=$((score - 100))
-    [[ "$name" == *debug*   ]] && score=$((score - 100))
-    [[ "$name" == *.exe     ]] && score=$((score - 300))
-    [[ "$name" == *.dmg     ]] && score=$((score - 300))
-    [[ "$name" == *windows* ]] && score=$((score - 300))
-    [[ "$name" == *darwin*  ]] && score=$((score - 300))
-    [[ "$name" == *macos*   ]] && score=$((score - 300))
+    [[ "$name" == *.rpm      ]] && score=$((score - 100))
+    [[ "$name" == *.sha256   ]] && score=$((score - 500))
+    [[ "$name" == *.sha512   ]] && score=$((score - 500))
+    [[ "$name" == *.asc      ]] && score=$((score - 500))
+    [[ "$name" == *source*   ]] && score=$((score - 100))
+    [[ "$name" == *debug*    ]] && score=$((score - 100))
+    [[ "$name" == *.exe      ]] && score=$((score - 300))
+    [[ "$name" == *.dmg      ]] && score=$((score - 300))
+    [[ "$name" == *windows*  ]] && score=$((score - 300))
+    [[ "$name" == *darwin*   ]] && score=$((score - 300))
+    [[ "$name" == *macos*    ]] && score=$((score - 300))
 
     echo "$score"
 }
 
-# Parse asset list from release JSON — outputs "url\tname" per line
 pick_best_asset() {
     local json="$1"
     python3 - "$json" << 'PYEOF'
@@ -298,7 +357,6 @@ install_from_github() {
     local asset_lines
     asset_lines=$(pick_best_asset "$json") || die "No release assets found for ${repo}."
 
-    # Score all assets
     local best_url="" best_name="" best_score=-9999
     local all_urls=() all_names=()
     while IFS=$'\t' read -r url name; do
@@ -314,7 +372,6 @@ install_from_github() {
     done <<< "$asset_lines"
 
     if (( best_score < 0 )) || [[ -z "$best_url" ]]; then
-        # No confident match — show full menu
         warn "Could not auto-detect asset for $(uname -m). Please select:"
         echo ""
         local i=1
@@ -329,7 +386,6 @@ install_from_github() {
         best_url="${all_urls[$idx]}"
         best_name="${all_names[$idx]}"
     else
-        # Show auto-selection with option to override
         echo ""
         local i=1
         for name in "${all_names[@]}"; do
@@ -371,7 +427,7 @@ install_from_github() {
     fi
 }
 
-# Install binary from archive to ~/.local/bin
+# ── Install binary from archive ──────────────────────────────
 install_archive() {
     local url="$1" filename="$2" repo="$3"
     local pkg_name
@@ -390,7 +446,6 @@ install_archive() {
         tar -xf "$tmpdir/$filename" -C "$tmpdir/extracted"
     fi
 
-    # Find executables
     local bins=()
     while IFS= read -r -d '' f; do
         bins+=("$f")
@@ -450,7 +505,6 @@ search_github() {
     local pkg="$1"
     local cache_file="$UNI_CACHE_DIR/gh_search_${pkg}.txt"
 
-    # Return cached result if fresh enough
     if [[ -f "$cache_file" ]]; then
         local age=$(( $(date +%s) - $(stat -c %Y "$cache_file" 2>/dev/null || echo 0) ))
         if (( age < UNI_CACHE_TTL )); then
@@ -482,15 +536,12 @@ print(items[0]['full_name'])
 PYEOF
 ) || return 1
 
-    # Cache the result
     mkdir -p "$UNI_CACHE_DIR"
     echo "$result" > "$cache_file"
     echo "$result"
 }
 
 # ── Parallel search ──────────────────────────────────────────
-# Runs apt/flatpak/snap/github searches concurrently.
-# Populates: apt_result, flatpak_result, snap_result, gh_result
 parallel_search() {
     local pkg="$1"
     local tmp
@@ -515,6 +566,37 @@ parallel_search() {
     gh_result=$(cat "$tmp/gh"       2>/dev/null || true)
 
     rm -rf "$tmp"
+}
+
+# ── Single-source search (for --source flag) ─────────────────
+single_source_search() {
+    local pkg="$1" source="$2"
+    apt_result="" flatpak_result="" snap_result="" gh_result=""
+    case "$source" in
+        apt)
+            spin_start "Searching apt..."
+            apt_result=$(search_apt "$pkg" 2>/dev/null) || true
+            spin_stop
+            ;;
+        flatpak)
+            spin_start "Searching flatpak..."
+            flatpak_result=$(search_flatpak "$pkg" 2>/dev/null) || true
+            spin_stop
+            ;;
+        snap)
+            spin_start "Searching snap..."
+            snap_result=$(search_snap "$pkg" 2>/dev/null) || true
+            spin_stop
+            ;;
+        github|gh)
+            spin_start "Searching GitHub..."
+            gh_result=$(search_github "$pkg" 2>/dev/null) || true
+            spin_stop
+            ;;
+        *)
+            die "Unknown source '${source}'. Valid: apt, flatpak, snap, github"
+            ;;
+    esac
 }
 
 # ── AppImage helpers ─────────────────────────────────────────
@@ -590,7 +672,6 @@ install_deb() {
     local file="$1"
     [[ -f "$file" ]] || die "File not found: $file"
 
-    # Architecture check — fail early with clear message
     local deb_arch sys
     deb_arch=$(dpkg-deb --field "$file" Architecture 2>/dev/null || true)
     sys=$(sys_arch)
@@ -668,8 +749,6 @@ handle_already_installed() {
 }
 
 # ── Source selection menu ────────────────────────────────────
-# NOTE: called inside $(...) so all UI output must go to >&2;
-# only the final chosen value is echoed to stdout.
 select_source() {
     local pkg="$1"; shift
     echo "" >&2
@@ -679,7 +758,7 @@ select_source() {
     local chosen
     select chosen in "$@"; do
         if [[ -n "$chosen" ]]; then
-            echo "$chosen"   # stdout only — captured by caller
+            echo "$chosen"
             return
         fi
         warn "Invalid choice." >&2
@@ -728,14 +807,11 @@ resolve_flatpak_id() {
 }
 
 # ── apt parallel-download install ────────────────────────────
-# Uses aria2c to pre-fetch .deb files in parallel, then hands to dpkg.
-# Falls back to plain apt if aria2c is not available.
 do_apt_install() {
     local pkg="$1"
     if has_aria2c; then
         step "Resolving download URLs via apt..."
         local urls
-        # apt-get --print-uris outputs lines like: 'url' pkg ver size checksum
         urls=$(apt-get install --print-uris -qq "$pkg" 2>/dev/null \
             | grep -oP "(?<=')[^']+" | grep -E '\.deb$') || true
 
@@ -764,10 +840,8 @@ do_apt_install() {
             fi
             rm -rf "$tmpdir"
         fi
-        # Fall through if URL extraction failed
     fi
 
-    # Standard install
     sudo "$(apt_cmd)" install -y "$pkg"
 }
 
@@ -800,12 +874,28 @@ do_install() {
 # ── INSTALL ──────────────────────────────────────────────────
 GH_REPO=""
 cmd_install() {
-    local pkg="${1:-}"
-    [[ -z "$pkg" ]] && die "Usage: uni install <package|user/repo|github-url|file.deb|file.appimage|url>"
+    # Parse flags: uni install <pkg> [--source apt|flatpak|snap|github]
+    local pkg="" forced_source=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --source|-s)
+                shift
+                forced_source="${1:-}"
+                [[ -z "$forced_source" ]] && die "--source requires a value: apt, flatpak, snap, github"
+                shift
+                ;;
+            *)
+                [[ -z "$pkg" ]] && pkg="$1" || die "Unexpected argument: $1"
+                shift
+                ;;
+        esac
+    done
+
+    [[ -z "$pkg" ]] && die "Usage: uni install <package|user/repo|github-url|file.deb|file.appimage|url> [--source apt|flatpak|snap|github]"
 
     init_registry
 
-    # GitHub URL or user/repo shorthand — check first before anything else
+    # GitHub URL or user/repo shorthand
     local maybe_repo
     maybe_repo=$(parse_github_repo "$pkg")
     if [[ -n "$maybe_repo" ]]; then
@@ -836,14 +926,16 @@ cmd_install() {
         install_appimage "$pkg"; return
     fi
 
-    # Check already installed
-    spin_start "Checking existing installations..."
-    detect_installed_backends "$pkg"
-    spin_stop
+    # Check already installed (skip if --source is forcing a specific backend)
+    if [[ -z "$forced_source" ]]; then
+        spin_start "Checking existing installations..."
+        detect_installed_backends "$pkg"
+        spin_stop
+    fi
 
     local exclude_sources=()
 
-    if [[ ${#UNI_INSTALLED_IN[@]} -gt 0 ]]; then
+    if [[ -z "$forced_source" && ${#UNI_INSTALLED_IN[@]} -gt 0 ]]; then
         handle_already_installed "$pkg" "${UNI_INSTALLED_IN[@]}"
         case "$UNI_DECISION" in
             exit)
@@ -890,9 +982,14 @@ cmd_install() {
         esac
     fi
 
-    # Parallel search across all backends
+    # Search — either single forced source or parallel across all
     local apt_result="" flatpak_result="" snap_result="" gh_result=""
-    parallel_search "$pkg"
+    if [[ -n "$forced_source" ]]; then
+        info "Searching ${BOLD}${forced_source}${RESET} only (--source)..."
+        single_source_search "$pkg" "$forced_source"
+    else
+        parallel_search "$pkg"
+    fi
 
     local sources=()
     [[ -n "$apt_result"     ]] && ! in_array "apt"     "${exclude_sources[@]:-}" && sources+=("apt")
@@ -901,7 +998,9 @@ cmd_install() {
     [[ -n "$gh_result"      ]] && sources+=("github (${gh_result})")
 
     if [[ ${#sources[@]} -eq 0 ]]; then
-        if [[ ${#exclude_sources[@]} -gt 0 ]]; then
+        if [[ -n "$forced_source" ]]; then
+            die "Package '${pkg}' not found in ${forced_source}."
+        elif [[ ${#exclude_sources[@]} -gt 0 ]]; then
             warn "No other sources found for '${pkg}'."
         else
             warn "Package '${pkg}' not found in apt, flatpak, snap, or GitHub."
@@ -1039,14 +1138,12 @@ cmd_update() {
     init_registry
     header "Updating all backends"
 
-    # apt must run first and interactively (needs tty for sudo prompt)
     if has_apt; then
         info "$(apt_cmd)..."
         sudo "$(apt_cmd)" update && sudo "$(apt_cmd)" upgrade -y
         echo ""
     fi
 
-    # flatpak and snap are user-level — run in parallel
     local fp_pid="" snap_pid=""
 
     if has_flatpak; then
@@ -1071,24 +1168,190 @@ cmd_update() {
     success "All backends updated."
 }
 
+# ── SELF-UPDATE ──────────────────────────────────────────────
+cmd_self_update() {
+    header "uni self-update"
+
+    local self_path
+    self_path=$(command -v uni 2>/dev/null || echo "$REAL_HOME/.local/bin/uni")
+
+    info "Checking latest version..."
+    local latest_json
+    latest_json=$(curl -sf --max-time 10 \
+        -H "Accept: application/vnd.github+json" \
+        "https://api.github.com/repos/${UNI_REPO}/releases/latest" 2>/dev/null) \
+        || die "Could not reach GitHub. Check your connection."
+
+    local latest_ver
+    latest_ver=$(python3 -c "import json,sys; d=json.loads(sys.argv[1]); print(d.get('tag_name','').lstrip('v'))" \
+        "$latest_json" 2>/dev/null || echo "")
+    [[ -z "$latest_ver" ]] && die "Could not determine latest version."
+
+    if ! version_gt "$latest_ver" "$UNI_VERSION"; then
+        success "Already up to date (v${UNI_VERSION})."
+        return 0
+    fi
+
+    info "Updating ${BOLD}v${UNI_VERSION}${RESET} → ${BOLD}v${latest_ver}${RESET}..."
+
+    local tmp
+    tmp=$(mktemp)
+    curl -fsSL "$UNI_RAW_URL" -o "$tmp" \
+        || { rm -f "$tmp"; die "Download failed."; }
+
+    # Sanity check
+    if ! head -1 "$tmp" | grep -q "bash"; then
+        rm -f "$tmp"
+        die "Downloaded file doesn't look right. Aborting."
+    fi
+
+    chmod +x "$tmp"
+    mv "$tmp" "$self_path" \
+        || { sudo mv "$tmp" "$self_path"; } \
+        || { rm -f "$tmp"; die "Could not write to ${self_path}. Try: sudo uni self-update"; }
+
+    # Bust the update-check cache so the banner doesn't linger
+    rm -f "$UNI_CACHE_DIR/latest_version.txt"
+
+    success "uni updated to v${latest_ver}"
+}
+
+# ── INTERCEPT ────────────────────────────────────────────────
+# Writes shell functions to the user's rc file that wrap apt/nala/snap/flatpak
+# so they all route through uni. `uni intercept off` removes them.
+
+_UNI_INTERCEPT_BLOCK_START="# >>> uni intercept begin <<<"
+_UNI_INTERCEPT_BLOCK_END="# >>> uni intercept end <<<"
+
+_intercept_shell_functions() {
+    cat << 'SHELLEOF'
+# Intercept apt / nala / snap / flatpak → uni
+apt()     { command uni install "$@" 2>/dev/null || command apt "$@"; }
+nala()    { command uni install "$@" 2>/dev/null || command nala "$@"; }
+snap()    {
+    case "${1:-}" in
+        install) shift; command uni install --source snap "$@" ;;
+        remove)  shift; command uni remove "$@" ;;
+        *)       command snap "$@" ;;
+    esac
+}
+flatpak() {
+    case "${1:-}" in
+        install) shift; command uni install --source flatpak "$@" ;;
+        uninstall|remove) shift; command uni remove "$@" ;;
+        *)       command flatpak "$@" ;;
+    esac
+}
+SHELLEOF
+}
+
+_detect_rc_file() {
+    case "${SHELL:-}" in
+        */zsh)  echo "$REAL_HOME/.zshrc" ;;
+        */fish) echo "$REAL_HOME/.config/fish/config.fish" ;;
+        *)      echo "$REAL_HOME/.bashrc" ;;
+    esac
+}
+
+cmd_intercept() {
+    local action="${1:-status}"
+    local rc_file
+    rc_file=$(_detect_rc_file)
+
+    case "$action" in
+        on)
+            if grep -q "$_UNI_INTERCEPT_BLOCK_START" "$rc_file" 2>/dev/null; then
+                warn "Intercept already enabled in ${rc_file}"
+                return 0
+            fi
+
+            {
+                echo ""
+                echo "$_UNI_INTERCEPT_BLOCK_START"
+                _intercept_shell_functions
+                echo "$_UNI_INTERCEPT_BLOCK_END"
+            } >> "$rc_file"
+
+            success "Intercept enabled in ${BOLD}${rc_file}${RESET}"
+            warn "Reload your shell: ${BOLD}source ${rc_file}${RESET}"
+            echo ""
+            echo -e "  ${DIM}apt install htop  →  uni install htop --source apt${RESET}"
+            echo -e "  ${DIM}flatpak install X →  uni install X --source flatpak${RESET}"
+            echo -e "  ${DIM}snap install X    →  uni install X --source snap${RESET}"
+            ;;
+
+        off)
+            if ! grep -q "$_UNI_INTERCEPT_BLOCK_START" "$rc_file" 2>/dev/null; then
+                warn "Intercept is not currently enabled in ${rc_file}"
+                return 0
+            fi
+
+            # Remove the block between the markers (inclusive)
+            local tmp
+            tmp=$(mktemp)
+            python3 - "$rc_file" "$_UNI_INTERCEPT_BLOCK_START" "$_UNI_INTERCEPT_BLOCK_END" "$tmp" << 'PYEOF'
+import sys
+src, start_marker, end_marker, dst = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+with open(src) as f:
+    lines = f.readlines()
+out, skip = [], False
+for line in lines:
+    if start_marker in line:
+        skip = True
+    if not skip:
+        out.append(line)
+    if end_marker in line:
+        skip = False
+# Strip trailing blank lines left by the removed block
+while out and out[-1].strip() == '':
+    out.pop()
+out.append('\n')
+with open(dst, 'w') as f:
+    f.writelines(out)
+PYEOF
+            mv "$tmp" "$rc_file"
+            success "Intercept removed from ${BOLD}${rc_file}${RESET}"
+            warn "Reload your shell: ${BOLD}source ${rc_file}${RESET}"
+            ;;
+
+        status)
+            if grep -q "$_UNI_INTERCEPT_BLOCK_START" "$rc_file" 2>/dev/null; then
+                success "Intercept is ${BOLD}ON${RESET} ${DIM}(${rc_file})${RESET}"
+            else
+                info "Intercept is ${BOLD}OFF${RESET}"
+            fi
+            ;;
+
+        *)
+            die "Usage: uni intercept [on|off|status]"
+            ;;
+    esac
+}
+
+
 # ── HELP ─────────────────────────────────────────────────────
 cmd_help() {
     echo ""
     echo -e "${BOLD}uni${RESET} ${DIM}v${UNI_VERSION}${RESET} — Universal Package Manager"
     echo -e "${DIM}by Dronzer Studios / Kasniya${RESET}"
     divider
-    echo -e "  ${BOLD}uni install${RESET} <package>            Search apt · flatpak · snap · GitHub"
-    echo -e "  ${BOLD}uni install${RESET} user/repo            Install from GitHub latest release"
-    echo -e "  ${BOLD}uni install${RESET} <github-url>         Install from GitHub repo URL"
-    echo -e "  ${BOLD}uni install${RESET} <file.deb>           Install local .deb"
-    echo -e "  ${BOLD}uni install${RESET} <url.deb>            Download & install .deb"
-    echo -e "  ${BOLD}uni install${RESET} <file.appimage>      Install AppImage + desktop entry"
-    echo -e "  ${BOLD}uni install${RESET} <url.AppImage>       Download & install AppImage"
-    echo -e "  ${BOLD}uni remove${RESET}  <package>            Remove (keep config)"
-    echo -e "  ${BOLD}uni purge${RESET}   <package>            Remove + all config/data"
-    echo -e "  ${BOLD}uni list${RESET}                         List uni-managed packages"
-    echo -e "  ${BOLD}uni update${RESET}                       Update all backends"
+    echo -e "  ${BOLD}uni install${RESET} <package>                Search apt · flatpak · snap · GitHub"
+    echo -e "  ${BOLD}uni install${RESET} <pkg> ${CYAN}--source${RESET} <src>     Force a specific backend"
+    echo -e "  ${BOLD}uni install${RESET} user/repo                Install from GitHub latest release"
+    echo -e "  ${BOLD}uni install${RESET} <github-url>             Install from GitHub repo URL"
+    echo -e "  ${BOLD}uni install${RESET} <file.deb>               Install local .deb"
+    echo -e "  ${BOLD}uni install${RESET} <url.deb>                Download & install .deb"
+    echo -e "  ${BOLD}uni install${RESET} <file.appimage>          Install AppImage + desktop entry"
+    echo -e "  ${BOLD}uni install${RESET} <url.AppImage>           Download & install AppImage"
+    echo -e "  ${BOLD}uni remove${RESET}  <package>                Remove (keep config)"
+    echo -e "  ${BOLD}uni purge${RESET}   <package>                Remove + all config/data"
+    echo -e "  ${BOLD}uni list${RESET}                             List uni-managed packages"
+    echo -e "  ${BOLD}uni update${RESET}                           Update all backends"
+    echo -e "  ${BOLD}uni self-update${RESET}                      Update uni itself"
+    echo -e "  ${BOLD}uni intercept${RESET} [on|off|status]        Route apt/snap/flatpak through uni"
+        echo -e "  ${BOLD}uni version${RESET}                          Print version"
     divider
+    echo -e "  ${DIM}--source values: apt  flatpak  snap  github${RESET}"
     echo -e "  ${DIM}Backends: $(apt_cmd) · flatpak · snap · dpkg · appimage · github · archive${RESET}"
     echo -e "  ${DIM}Optional: aria2c (parallel downloads) — sudo apt install aria2${RESET}"
     echo ""
@@ -1096,18 +1359,27 @@ cmd_help() {
 
 # ── Entry point ──────────────────────────────────────────────
 main() {
+    # Kick off background update check on every run (non-blocking)
+    check_for_update
+
     local cmd="${1:-help}"
     shift || true
     case "$cmd" in
-        install) cmd_install "$@" ;;
-        remove)  cmd_remove  "$@" ;;
-        purge)   cmd_purge   "$@" ;;
-        list)    cmd_list ;;
-        update)  cmd_update ;;
-        version) echo "uni v${UNI_VERSION}" ;;
-        help|--help|-h) cmd_help ;;
+        install)                cmd_install "$@" ;;
+        remove)                 cmd_remove  "$@" ;;
+        purge)                  cmd_purge   "$@" ;;
+        list)                   cmd_list ;;
+        update)                 cmd_update ;;
+        self-update|--update)   cmd_self_update ;;
+        intercept)              cmd_intercept "$@" ;;
+        
+        version|--version|-V)   echo "uni v${UNI_VERSION}" ;;
+        help|--help|-h)         cmd_help ;;
         *) error "Unknown command: ${cmd}"; cmd_help; exit 1 ;;
     esac
+
+    # Print update banner after the command finishes (if one was found)
+    print_update_banner
 }
 
 main "$@"

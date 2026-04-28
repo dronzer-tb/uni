@@ -1,367 +1,243 @@
-# UNI — Universal Package Manager Wrapper v2.1.3
+# uni — Universal Package Manager for Linux
 
-A unified command interface for installing, managing, and updating software across different package management backends on Linux.
+> **One command to rule them all:** `uni install htop` instead of `apt install`, `snap install`, or `flatpak install`
 
-## Overview
-
-**UNI** abstracts away the complexity of managing packages from multiple sources—APT, Flatpak, Snap, and GitHub releases—through a single, consistent command structure. Whether you're installing from system repositories, sandboxed app stores, or downloading the latest release from GitHub, UNI handles asset selection, installation, and registry management automatically.
-
-### Key Features
-
-✨ **Unified Interface** — One command for all package sources  
-🎯 **Smart Asset Detection** — Automatically selects the best binary for your system architecture  
-📦 **Multiple Backends** — APT, Flatpak, Snap, and GitHub releases  
-🔍 **Parallel Search** — Search across all backends simultaneously for packages  
-⚡ **Cached Results** — 1-hour TTL cache for GitHub searches to reduce API calls  
-🚀 **Parallel Downloads** — Optional aria2c support for faster multi-connection downloads  
-🔄 **Central Registry** — Track installed packages across all backends  
-🧹 **Complete Removal** — Purge packages and all associated data  
-🌐 **GitHub Integration** — Download and install latest releases with minimal input  
-💾 **Lightweight & Fast** — Minimal dependencies (bash, python3, curl)  
+![Version](https://img.shields.io/badge/version-2.2.0-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Platform](https://img.shields.io/badge/platform-Linux-lightgrey)
 
 ---
 
-## Installation
 
-Clone the repository and link the script to your PATH:
 
-```bash
-git clone https://github.com/dronzer-tb/UNI
-chmod +x ~/uni/uni-2.1.3.txt
-ln -s ~/uni/uni-2.1.3.txt ~/.local/bin/uni
-```
+## 🚀 Quick Start
 
-Ensure `~/.local/bin` is in your `$PATH`:
+### Installation (One-Liner)
 
 ```bash
-export PATH="$PATH:$HOME/.local/bin"
+curl -fsSL https://raw.githubusercontent.com/YOUR_USER/YOUR_REPO/main/installer.sh | bash
 ```
 
-### Requirements
+This single command will:
+- ✅ Check and install dependencies (`python3`, `curl`)
+- ✅ Download and install `uni` to `~/.local/bin`
+- ✅ Add `~/.local/bin` to your PATH
+- ✅ Initialize the package registry
+- ✅ Run an interactive tutorial
 
-- **bash** — v4.0+
-- **python3** — v3.6+
-- **curl** — for downloading files
-
-Optional for enhanced performance and GitHub integration:
-- **aria2c** — parallel download support (up to 8 connections)
-- **gh** — GitHub CLI (recommended for release fetching)
+**After installation:**
+```bash
+source ~/.bashrc  # Reload your shell
+uni install package-name  # Start using uni!
+```
 
 ---
 
-## Quick Start
+## 📦 Core Commands
 
-### Basic Commands
+### Installing Packages
 
 ```bash
-# Install a package
-uni install <package>
+# Search everywhere (apt, flatpak, snap, GitHub)
+uni install htop
+# → Shows you all available options, you pick
 
-# Search for a package across all backends
-uni search <package>
+# Force a specific backend
+uni install htop --source apt
+uni install htop --source flatpak
 
-# List installed packages
+# Install from GitHub (auto-detects your CPU architecture)
+uni install user/repo                              # Latest release
+uni install https://github.com/user/repo
+uni install https://github.com/user/repo/releases/latest
+
+# Install local or remote files
+uni install /path/to/file.deb
+uni install https://example.com/app.AppImage
+uni install archive.zip
+```
+
+### Removing Packages
+
+```bash
+# Remove (keep config files)
+uni remove htop
+
+# Purge (remove package + all data & configs)
+uni purge htop
+# For flatpak, also removes ~/.var/app/<id>
+```
+
+### Managing Packages
+
+```bash
+# List all packages installed via uni
 uni list
 
-# Update installed packages
+# Update all backends at once (apt, flatpak, snap in parallel)
 uni update
 
-# Remove a package
-uni remove <package>
+# Update uni itself
+uni self-update
+uni --update
 
-# Completely remove a package and all data
-uni purge <package>
+# Check version
+uni version
+uni --version
+```
+
+### Intercept Mode (Advanced)
+
+Route all package manager commands through `uni` automatically:
+
+```bash
+# Enable: apt/snap/flatpak now route through uni
+uni intercept on
+
+# Disable cleanly
+uni intercept off
+
+# Check status
+uni intercept status
+
+# After enabling, reload your shell:
+source ~/.bashrc
+```
+
+Now `apt install foo` → `uni install foo` automatically!
+
+### Other Commands
+
+```bash
+# Interactive tutorial
+uni tutorial
 
 # Show help
 uni help
-```
 
-### Install from Different Sources
-
-#### APT (System Repository)
-
-```bash
-uni install firefox
-```
-
-#### Flatpak
-
-```bash
-uni install flatpak:org.gnome.Calendar
-```
-
-#### Snap
-
-```bash
-uni install snap:code
-```
-
-#### GitHub Release
-
-```bash
-uni install github:username/repo-name
+# Debug mode
+uni intercept package-name
 ```
 
 ---
 
-## How It Works
+## 🔧 Supported Backends
 
-### Package Installation Flow
-
-1. **Identify Backend** — UNI determines the source (APT, Flatpak, or GitHub)
-2. **Fetch Metadata** — Retrieves available versions and assets
-3. **Detect Architecture** — Identifies your system architecture (x86_64, ARM, etc.)
-4. **Smart Asset Selection** — Scores and ranks available binaries:
-   - Prefers `.deb` packages for system repos
-   - Favors `.appimage` for portable apps
-   - Supports `.tar.gz`, `.tar.xz`, and `.zip` archives
-   - Automatically rejects incompatible architectures and platforms
-5. **Install** — Deploys the package using the appropriate method
-6. **Register** — Tracks installation in the central registry
-
-### Asset Scoring
-
-For GitHub releases, UNI intelligently selects the best asset by scoring based on:
-
-- **Architecture Match** (+50 points) — Prioritizes your system's CPU architecture
-- **Format Preference** — `.deb` (+40), `.appimage` (+30), archives (+5-10)
-- **Linux Compatibility** (+20) — Favors Linux-specific builds
-- **Penalties** — Filters out checksums (-500), Windows/macOS builds (-300), debug symbols (-100)
-
-If multiple assets have similar scores, you're prompted to select manually.
+| Backend | Type | Use Case |
+|---------|------|----------|
+| **apt/nala** | Native packages | Debian, Ubuntu, Pop!_OS, Linux Mint |
+| **flatpak** | Containerized apps | Universal Linux apps (best for desktops) |
+| **snap** | Universal packages | Cross-distro packages |
+| **GitHub** | Release downloads | Latest binaries, AppImages, archives |
 
 ---
 
-## Registry & Storage
+## 💾 Registry & Storage
 
-UNI organizes installed packages and metadata in user-level directories:
+`uni` tracks all installed packages in a single JSON registry:
 
 ```
-~/.local/share/uni/
-├── installed.json          # Central registry of all installed packages
-├── appimages/              # Cached AppImage files
-├── icons/                  # Package icons for desktop integration
-└── applications/           # Desktop entry files
-
-~/.cache/uni/
-└── gh_search_<pkg>.txt    # Cached GitHub search results (1-hour TTL)
+~/.local/share/uni/installed.json
 ```
 
-Each entry in `installed.json` tracks:
-- Package name
-- Installation backend (apt, flatpak, snap, github)
-- Package ID or path
-- Installation timestamp
-
----
-
-## Command Reference
-
-### `uni install <PACKAGE>`
-
-Install a package from the appropriate backend or search across all backends.
-
-**Syntax:**
-- `uni install <name>` — Search and install from best-matched backend
-- `uni install flatpak:<id>` — Install a Flatpak app (e.g., `org.kde.Dolphin`)
-- `uni install snap:<name>` — Install a Snap app (e.g., `code`)
-- `uni install github:<owner>/<repo>` — Install from GitHub release
-
-**Example:**
-```bash
-uni install vlc                              # Search all backends for VLC
-uni install flatpak:com.spotify.Client       # Install Spotify Flatpak
-uni install snap:code                        # Install VS Code as Snap
-uni install github:cli/cli                   # Install GitHub CLI from latest release
+Example:
+```json
+{
+  "htop": {
+    "backend": "apt",
+    "id": "htop"
+  },
+  "flatseal": {
+    "backend": "flatpak",
+    "id": "com.github.flatseal"
+  },
+  "gh-cli": {
+    "backend": "github",
+    "id": "cli/cli"
+  }
+}
 ```
 
-### `uni search <PACKAGE>`
+### Other Directories
 
-Search for a package across all available backends in parallel.
-
-**Example:**
-```bash
-uni search vlc
-uni search python
 ```
-
-Searches simultaneously in:
-- APT repositories
-- Flatpak remote catalog
-- Snap store
-- GitHub repositories (with smart ranking by stars)
-
-Results are cached for 1 hour to minimize API requests.
-
-### `uni list [BACKEND]`
-
-List installed packages. Optionally filter by backend.
-
-**Example:**
-```bash
-uni list                    # Show all installed packages
-uni list apt                # Show APT packages only
-uni list flatpak            # Show Flatpak packages only
-uni list snap               # Show Snap packages only
-uni list github             # Show GitHub-installed packages
-```
-
-### `uni update [PACKAGE]`
-
-Check for updates and upgrade packages.
-
-**Example:**
-```bash
-uni update                  # Update all packages
-uni update vlc              # Update only VLC
-```
-
-### `uni remove <PACKAGE>`
-
-Remove a package while preserving user data and configuration.
-
-**Example:**
-```bash
-uni remove vlc
-```
-
-### `uni purge <PACKAGE>`
-
-Completely remove a package and all associated data, caches, and configuration.
-
-**Warning:** This action is irreversible.
-
-**Example:**
-```bash
-uni purge vlc
-```
-
-### `uni help`
-
-Display help and usage information.
-
----
-
-## Supported Backends
-
-### APT (Debian/Ubuntu)
-
-Installs packages from the system repository. Best for essential system tools and libraries.
-
-```bash
-uni install git
-uni install python3-dev
-```
-
-### Flatpak
-
-Installs sandboxed applications. Ideal for desktop apps and third-party software.
-
-```bash
-uni install flatpak:org.gnome.Calendar
-uni install flatpak:com.obsproject.Studio
-```
-
-Browse available Flatpak apps at [flathub.org](https://flathub.org)
-
-### Snap
-
-Installs universal Linux applications with automatic updates. Great for tools and applications across different Linux distributions.
-
-```bash
-uni install snap:code
-uni install snap:vlc
-```
-
-### GitHub
-
-Automatically downloads and installs the latest release from any GitHub repository. UNI handles:
-- Release fetching (with smart caching)
-- Asset scoring and selection
-- Binary extraction and placement
-- Desktop integration (where applicable)
-
-```bash
-uni install github:cli/cli
-uni install github:BurntSushi/ripgrep
-uni install github:junegunn/fzf
+~/.local/bin/uni                    # Main executable
+~/.local/share/uni/appimages/       # Downloaded AppImages
+~/.local/share/uni/icons/           # Desktop app icons
+~/.cache/uni/                       # Search cache (1-hour TTL)
 ```
 
 ---
 
-## Architecture Support
+##  System Requirements
 
-UNI automatically detects and prioritizes binaries for:
-
-- **x86_64** (AMD64) — Intel/AMD 64-bit processors
-- **ARM64** (aarch64) — Apple Silicon, Raspberry Pi 4+
-- **ARMv7l** — 32-bit ARM (Raspberry Pi 3, etc.)
-- **i686** — 32-bit x86 processors
-
-If no binary matches your architecture, UNI will prompt you to select manually from available options.
+- **OS:** Linux only
+- **Shell:** Bash 4+
+- **Dependencies:** `python3`, `curl`
+- **Architectures:** x86_64, aarch64, armv7l (others may work)
+- **Optional:** `aria2c` (for faster parallel downloads)
 
 ---
 
-## Advanced Usage
+## ⚡ Performance Tips
 
-### Manual Asset Selection
-
-When installing from GitHub, if auto-detection finds ambiguous matches, you'll see a menu:
-
-```
- ! Could not auto-detect asset for aarch64. Please select:
-
-  1) tool-1.2.3-aarch64.deb
-  2) tool-1.2.3-arm64.tar.gz
-  3) tool-1.2.3-amd64.deb
-
-Select asset [1-3]: 1
+### Use aria2c for faster downloads
+```bash
+sudo apt install aria2
+# uni will automatically use it for parallel downloads
 ```
 
-### Viewing Installed Packages
+### Enable intercept mode for convenience
+```bash
+uni intercept on
+source ~/.bashrc
+# Now apt/snap/flatpak all route through uni
+```
 
-Query the registry directly:
+### Run updates in background
+```bash
+uni update &  # Background process
+```
+
+---
+
+##  Configuration
+
+### Shell Integration
+
+After installation, your shell RC files are updated:
 
 ```bash
-cat ~/.local/share/uni/installed.json | python3 -m json.tool
+export PATH="$HOME/.local/bin:$PATH"  # uni
 ```
 
-### Removing AppImages
+To manually add `uni` to PATH:
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
 
-Installed AppImages are cached and can be removed manually:
+### Changing Install Directory
+
+By default, `uni` is installed to `~/.local/bin`. To install elsewhere:
 
 ```bash
-ls ~/.local/share/uni/appimages/
-rm ~/.local/share/uni/appimages/toolname.AppImage
+# Modify the installer before running
+UNI_RAW_URL="..." INSTALL_DIR="/custom/path" bash installer.sh
 ```
 
 ---
 
-## Configuration
+## ⚠️ Disclaimer
 
-### Environment Variables
-
-Control UNI behavior with environment variables:
-
-| Variable | Purpose | Example |
-|----------|---------|---------|
-| `UNI_REGISTRY` | Override registry location | `export UNI_REGISTRY=~/.config/uni/registry.json` |
-| `UNI_APPIMAGE_DIR` | Custom AppImage cache location | `export UNI_APPIMAGE_DIR=/mnt/storage/apps` |
+This code has been **improved with the help of AI assistance**. The original `uni` concept and core functionality were enhanced for:
+- Better user experience
+- Improved error handling
+- Enhanced documentation
+- Additional features
+- Code quality improvements
 
 ---
 
-## Development & Contribution
+## 📄 License
 
-### Project Structure
-
-```
-uni/
-├── uni-2.1.3.txt            # Main executable
-├── README.md                # This file
-└── LICENSE                  # GPL v3
-```
-
-### License
-
-This project is licensed under the **GNU General Public License v3.0**. See [LICENSE](LICENSE) for details.
-
+GNU General Public License v3.0. — See LICENSE file for details
