@@ -122,30 +122,86 @@ init_registry() {
 # ── Registry helpers ─────────────────────────────────────────
 registry_add() {
     local name="$1" backend="$2" id="$3"
-    python3 - "$name" "$backend" "$id" "$UNI_REGISTRY" << 'PYEOF'
+    if command -v flock &>/dev/null; then
+        (
+            flock -x 200
+            python3 - "$name" "$backend" "$id" "$UNI_REGISTRY" << 'PYEOF'
 import json, sys
+import os
+import tempfile
 name, backend, id_val, reg_path = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 try:
     with open(reg_path) as f: d = json.load(f)
 except (FileNotFoundError, json.JSONDecodeError):
     d = {}
 d[name] = {'backend': backend, 'id': id_val}
-with open(reg_path, 'w') as f: json.dump(d, f, indent=2)
+dirpath = os.path.dirname(reg_path) or '.'
+fd, tmp = tempfile.mkstemp(dir=dirpath)
+with os.fdopen(fd, 'w') as f:
+    json.dump(d, f, indent=2)
+os.replace(tmp, reg_path)
 PYEOF
+        ) 200>"${UNI_REGISTRY}.lock"
+    else
+        python3 - "$name" "$backend" "$id" "$UNI_REGISTRY" << 'PYEOF'
+import json, sys
+import os
+import tempfile
+name, backend, id_val, reg_path = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+try:
+    with open(reg_path) as f: d = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    d = {}
+d[name] = {'backend': backend, 'id': id_val}
+dirpath = os.path.dirname(reg_path) or '.'
+fd, tmp = tempfile.mkstemp(dir=dirpath)
+with os.fdopen(fd, 'w') as f:
+    json.dump(d, f, indent=2)
+os.replace(tmp, reg_path)
+PYEOF
+    fi
 }
 
 registry_remove() {
     local name="$1"
-    python3 - "$name" "$UNI_REGISTRY" << 'PYEOF'
+    if command -v flock &>/dev/null; then
+        (
+            flock -x 200
+            python3 - "$name" "$UNI_REGISTRY" << 'PYEOF'
 import json, sys
+import os
+import tempfile
 name, reg_path = sys.argv[1], sys.argv[2]
 try:
     with open(reg_path) as f: d = json.load(f)
 except (FileNotFoundError, json.JSONDecodeError):
     d = {}
 d.pop(name, None)
-with open(reg_path, 'w') as f: json.dump(d, f, indent=2)
+dirpath = os.path.dirname(reg_path) or '.'
+fd, tmp = tempfile.mkstemp(dir=dirpath)
+with os.fdopen(fd, 'w') as f:
+    json.dump(d, f, indent=2)
+os.replace(tmp, reg_path)
 PYEOF
+        ) 200>"${UNI_REGISTRY}.lock"
+    else
+        python3 - "$name" "$UNI_REGISTRY" << 'PYEOF'
+import json, sys
+import os
+import tempfile
+name, reg_path = sys.argv[1], sys.argv[2]
+try:
+    with open(reg_path) as f: d = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    d = {}
+d.pop(name, None)
+dirpath = os.path.dirname(reg_path) or '.'
+fd, tmp = tempfile.mkstemp(dir=dirpath)
+with os.fdopen(fd, 'w') as f:
+    json.dump(d, f, indent=2)
+os.replace(tmp, reg_path)
+PYEOF
+    fi
 }
 
 registry_get() {
@@ -807,12 +863,14 @@ resolve_flatpak_id() {
 }
 
 # ── apt parallel-download install ────────────────────────────
-do_apt_install() {
-    local pkg="$1"
+do_apt_install_many() {
+    local pkgs=("$@")
+    [[ ${#pkgs[@]} -eq 0 ]] && return 0
+
     if has_aria2c; then
         step "Resolving download URLs via apt..."
         local urls
-        urls=$(apt-get install --print-uris -qq "$pkg" 2>/dev/null \
+        urls=$(apt-get install --print-uris -qq "${pkgs[@]}" 2>/dev/null \
             | grep -oP "(?<=')[^']+" | grep -E '\.deb$') || true
 
         if [[ -n "$urls" ]]; then
@@ -842,7 +900,50 @@ do_apt_install() {
         fi
     fi
 
-    sudo "$(apt_cmd)" install -y "$pkg"
+    sudo "$(apt_cmd)" install -y "${pkgs[@]}"
+}
+
+do_apt_install() {
+    local pkg="$1"
+    do_apt_install_many "$pkg"
+}
+
+install_many_github_parallel() {
+    local repos=("$@")
+    local tmpdir
+    tmpdir=$(mktemp -d)
+
+    local pids=() names=() logs=()
+    local pkg safe_name log
+    local n=0
+
+    for pkg in "${repos[@]}"; do
+        ((n++))
+        safe_name=$(printf '%s' "$pkg" | tr -c '[:alnum:]_.:-' '_')
+        log="${tmpdir}/${n}_${safe_name}.log"
+        (
+            cmd_install_one "$pkg" "github"
+        ) >"$log" 2>&1 &
+        pids+=("$!")
+        names+=("$pkg")
+        logs+=("$log")
+    done
+
+    local idx=0
+    local rc=0
+    while (( idx < ${#pids[@]} )); do
+        if wait "${pids[$idx]}"; then
+            success "Installed ${BOLD}${names[$idx]}${RESET} via GitHub"
+        else
+            error "Failed to install ${names[$idx]} via GitHub"
+            sed 's/^/  /' "${logs[$idx]}" | head -n 120
+            rc=1
+        fi
+        ((idx++))
+    done
+
+    rm -rf "$tmpdir"
+    return "$rc"
 }
 
 # ── Install executor ─────────────────────────────────────────
@@ -873,27 +974,9 @@ do_install() {
 
 # ── INSTALL ──────────────────────────────────────────────────
 GH_REPO=""
-cmd_install() {
-    # Parse flags: uni install <pkg> [--source apt|flatpak|snap|github]
-    local pkg="" forced_source=""
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --source|-s)
-                shift
-                forced_source="${1:-}"
-                [[ -z "$forced_source" ]] && die "--source requires a value: apt, flatpak, snap, github"
-                shift
-                ;;
-            *)
-                [[ -z "$pkg" ]] && pkg="$1" || die "Unexpected argument: $1"
-                shift
-                ;;
-        esac
-    done
-
-    [[ -z "$pkg" ]] && die "Usage: uni install <package|user/repo|github-url|file.deb|file.appimage|url> [--source apt|flatpak|snap|github]"
-
-    init_registry
+cmd_install_one() {
+    local pkg="$1"
+    local forced_source="${2:-}"
 
     # GitHub URL or user/repo shorthand
     local maybe_repo
@@ -1023,6 +1106,81 @@ cmd_install() {
     else
         do_install "$pkg" "$chosen_source"
     fi
+}
+
+cmd_install() {
+    # Parse flags: uni install <pkg...> [--source apt|flatpak|snap|github] [--parallel]
+    local forced_source=""
+    local install_parallel=0
+    local pkgs=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --source|-s)
+                shift
+                forced_source="${1:-}"
+                [[ -z "$forced_source" ]] && die "--source requires a value: apt, flatpak, snap, github"
+                shift
+                ;;
+            --source=*)
+                forced_source="${1#*=}"
+                [[ -z "$forced_source" ]] && die "--source requires a value: apt, flatpak, snap, github"
+                shift
+                ;;
+            --parallel|-p)
+                install_parallel=1
+                shift
+                ;;
+            *)
+                pkgs+=("$1")
+                shift
+                ;;
+        esac
+    done
+
+    forced_source="${forced_source,,}"
+    [[ ${#pkgs[@]} -eq 0 ]] && die "Usage: uni install <package...|user/repo|github-url|file.deb|file.appimage|url> [--source apt|flatpak|snap|github]"
+
+    init_registry
+
+    local total="${#pkgs[@]}"
+    local pkg
+
+    # Batch apt installs in one transaction when source is explicitly apt.
+    if (( total > 1 )) && [[ "$forced_source" == "apt" ]]; then
+        info "Installing (${total}) packages via ${BOLD}apt${RESET} in one batch..."
+        do_apt_install_many "${pkgs[@]}"
+        for pkg in "${pkgs[@]}"; do
+            registry_add "$pkg" "apt" "$pkg"
+            success "Installed ${BOLD}${pkg}${RESET} via $(apt_cmd)"
+        done
+        return
+    fi
+
+    if (( total > 1 )) && (( install_parallel == 1 )); then
+        case "$forced_source" in
+            github|gh)
+                info "Installing (${total}) GitHub packages in parallel..."
+                install_many_github_parallel "${pkgs[@]}"
+                return $?
+                ;;
+            "")
+                die "--parallel for multiple packages requires --source github (or use --source apt for batched apt installs)."
+                ;;
+            *)
+                warn "--parallel is currently supported for --source github only; running sequentially for ${forced_source}."
+                ;;
+        esac
+    fi
+
+    local i=0
+    for pkg in "${pkgs[@]}"; do
+        ((i++))
+        if (( total > 1 )); then
+            info "Installing (${i}/${total}): ${BOLD}${pkg}${RESET}"
+        fi
+        cmd_install_one "$pkg" "$forced_source"
+    done
 }
 
 # ── REMOVE ───────────────────────────────────────────────────
@@ -1401,8 +1559,10 @@ cmd_help() {
     echo -e "${BOLD}uni${RESET} ${DIM}v${UNI_VERSION}${RESET} — Universal Package Manager"
     echo -e "${DIM}by Dronzer Studios / Kasniya${RESET}"
     divider
-    echo -e "  ${BOLD}uni install${RESET} <package>                Search apt · flatpak · snap · GitHub"
+    echo -e "  ${BOLD}uni install${RESET} <package...>             Search apt · flatpak · snap · GitHub"
     echo -e "  ${BOLD}uni install${RESET} <pkg> ${CYAN}--source${RESET} <src>     Force a specific backend"
+    echo -e "  ${BOLD}uni install${RESET} <pkg...> ${CYAN}--source${RESET} apt     Batch install apt packages in one transaction"
+    echo -e "  ${BOLD}uni install${RESET} <repo...> ${CYAN}--source${RESET} github ${CYAN}--parallel${RESET}  Parallel GitHub installs"
     echo -e "  ${BOLD}uni install${RESET} user/repo                Install from GitHub latest release"
     echo -e "  ${BOLD}uni install${RESET} <github-url>             Install from GitHub repo URL"
     echo -e "  ${BOLD}uni install${RESET} <file.deb>               Install local .deb"

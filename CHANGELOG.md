@@ -2,6 +2,18 @@
 
 All notable changes to uni are documented in this file.
 
+## [2.4.0] — 2026-04-29
+
+### Added
+- Multi-package install support: `uni install <pkg1> <pkg2> ...`
+- Parallel GitHub installs for multiple repos using `--source github --parallel`
+- Batched apt installs for multiple packages in one transaction via `--source apt`
+
+### Changed
+- `uni install` argument parsing now accepts multiple package names and `--source=...` form
+- Registry writes now use lock + atomic replace to prevent corruption during concurrent operations
+- Help and README updated with new multi-package and parallel install usage examples
+
 ## [2.2.1] — 2026-04-28
 
 ### Updated
@@ -92,6 +104,7 @@ This project follows [Semantic Versioning](https://semver.org/):
 For detailed information about changes, see git history or GitHub releases.
 
 ---
+[2.4.0]: https://github.com/dronzer-tb/UNI/releases/tag/v2.4.0
 [2.2.1]: https://github.com/dronzer-tb/UNI/releases/tag/v2.2.1
 [2.2.0]: https://github.com/dronzer-tb/uni/releases/tag/v2.2.0
 [2.1.3]: https://github.com/dronzer-tb/uni/releases/tag/v2.1.3

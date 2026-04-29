@@ -1,8 +1,8 @@
-# uni — Universal Package Manager for Linux
+# uni — Universal Warraper for Varius Packet Managers
 
-> **One command to rule them all:** `uni install htop` instead of `apt install`, `snap install`, or `flatpak install`
+> **One command to rule them all:** `uni install <pkg>` instead of `apt install`, `snap install`, or `flatpak install`
 
-![Version](https://img.shields.io/badge/version-2.3.0-blue)
+![Version](https://img.shields.io/badge/version-2.4.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Platform](https://img.shields.io/badge/platform-Linux-lightgrey)
 
@@ -41,6 +41,15 @@ uni install package-name  # Start using uni!
 # Search everywhere (apt, flatpak, snap, GitHub)
 uni install htop
 # → Shows you all available options, you pick
+
+# Install multiple packages in one command
+uni install apktool android-sdk-build-tools openjdk-17-jdk python3
+
+# Batch apt installs in a single transaction (faster and lock-safe)
+uni install apktool android-sdk-build-tools openjdk-17-jdk python3 --source apt
+
+# Run multiple GitHub installs in parallel
+uni install sharkdp/bat cli/cli junegunn/fzf --source github --parallel
 
 # Force a specific backend
 uni install htop --source apt
