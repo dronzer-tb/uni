@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-UNI_VERSION="2.3.0"
+UNI_VERSION="2.4.0"
 UNI_RAW_URL="https://raw.githubusercontent.com/dronzer-tb/UNI/refs/heads/master/uni"
 INSTALL_DIR="$HOME/.local/bin"
 INSTALL_PATH="$INSTALL_DIR/uni"

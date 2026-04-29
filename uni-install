@@ -13,7 +13,7 @@
 
 set -euo pipefail
 
-UNI_VERSION="2.3.0"
+UNI_VERSION="2.4.0"
 UNI_REPO="${UNI_REPO:-dronzer-tb/UNI}"
 INSTALL_DIR="$HOME/.local/bin"
 INSTALL_PATH="$INSTALL_DIR/uni"

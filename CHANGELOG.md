@@ -14,6 +14,19 @@ All notable changes to uni are documented in this file.
 - Registry writes now use lock + atomic replace to prevent corruption during concurrent operations
 - Help and README updated with new multi-package and parallel install usage examples
 
+## [2.3.0] — 2026-04-29
+
+### Added
+- Fallback version discovery from `UNI_RAW_URL` when `releases/latest` has no tag for the repo.
+
+### Changed
+- `uni self-update` now compares the downloaded `master/uni` script with the installed binary, so commit-only pushes are detected even when `UNI_VERSION` is unchanged.
+- Update-check path reuses the same fallback resolution logic to avoid false negatives.
+
+### Fixed
+- Incorrect “Could not reach GitHub” failures when GitHub API returned 404 for missing releases.
+- Added downgrade protection when remote `UNI_VERSION` is older than the installed version.
+
 ## [2.2.1] — 2026-04-28
 
 ### Updated
@@ -105,6 +118,7 @@ For detailed information about changes, see git history or GitHub releases.
 
 ---
 [2.4.0]: https://github.com/dronzer-tb/UNI/releases/tag/v2.4.0
+[2.3.0]: https://github.com/dronzer-tb/UNI/releases/tag/v2.3.0
 [2.2.1]: https://github.com/dronzer-tb/UNI/releases/tag/v2.2.1
 [2.2.0]: https://github.com/dronzer-tb/uni/releases/tag/v2.2.0
 [2.1.3]: https://github.com/dronzer-tb/uni/releases/tag/v2.1.3
