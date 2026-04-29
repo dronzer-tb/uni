@@ -1419,13 +1419,6 @@ cmd_self_update() {
         *) die "Could not determine latest version from GitHub." ;;
     esac
 
-    if ! version_gt "$latest_ver" "$UNI_VERSION"; then
-        success "Already up to date (v${UNI_VERSION})."
-        return 0
-    fi
-
-    info "Updating ${BOLD}v${UNI_VERSION}${RESET} → ${BOLD}v${latest_ver}${RESET}..."
-
     local tmp
     tmp=$(mktemp)
     curl -fsSL "$UNI_RAW_URL" -o "$tmp" \
@@ -1435,6 +1428,23 @@ cmd_self_update() {
     if ! head -1 "$tmp" | grep -q "bash"; then
         rm -f "$tmp"
         die "Downloaded file doesn't look right. Aborting."
+    fi
+
+    if cmp -s "$tmp" "$self_path"; then
+        rm -f "$tmp"
+        success "Already up to date (v${UNI_VERSION})."
+        return 0
+    fi
+
+    if version_gt "$UNI_VERSION" "$latest_ver"; then
+        rm -f "$tmp"
+        die "Remote version (v${latest_ver}) is older than installed (v${UNI_VERSION}). Aborting."
+    fi
+
+    if version_gt "$latest_ver" "$UNI_VERSION"; then
+        info "Updating ${BOLD}v${UNI_VERSION}${RESET} → ${BOLD}v${latest_ver}${RESET}..."
+    else
+        info "Updating to latest commit on ${BOLD}master${RESET} (version unchanged: v${UNI_VERSION})..."
     fi
 
     chmod +x "$tmp"
