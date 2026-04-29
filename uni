@@ -272,6 +272,29 @@ sys.exit(0 if a > b else 1)
 " "$1" "$2" 2>/dev/null
 }
 
+fetch_uni_latest_version() {
+    local timeout="${1:-10}"
+    local release_json latest_ver raw_script
+
+    release_json=$(curl -sS --max-time "$timeout" \
+        -H "Accept: application/vnd.github+json" \
+        -H "X-GitHub-Api-Version: 2022-11-28" \
+        "https://api.github.com/repos/${UNI_REPO}/releases/latest" 2>/dev/null || true)
+
+    latest_ver=$(python3 -c "import json,sys; d=json.loads(sys.argv[1]); tag=d.get('tag_name',''); print(tag.lstrip('v') if tag else '')" \
+        "$release_json" 2>/dev/null || echo "")
+    if [[ -n "$latest_ver" ]]; then
+        echo "$latest_ver"
+        return 0
+    fi
+
+    raw_script=$(curl -sS --max-time "$timeout" "$UNI_RAW_URL" 2>/dev/null) || return 1
+    latest_ver=$(printf '%s\n' "$raw_script" | sed -n 's/^UNI_VERSION="\([^"]*\)".*/\1/p' | head -n1)
+    [[ -n "$latest_ver" ]] || return 2
+
+    echo "$latest_ver"
+}
+
 # ── Update notifier ──────────────────────────────────────────
 # Runs a background check once per day. If a newer version is found,
 # prints a banner at the end of the current command.
@@ -293,10 +316,7 @@ check_for_update() {
         # Background fetch — doesn't block the user
         {
             local latest
-            latest=$(curl -sf --max-time 6 \
-                -H "Accept: application/vnd.github+json" \
-                "https://api.github.com/repos/${UNI_REPO}/releases/latest" 2>/dev/null \
-                | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('tag_name','').lstrip('v'))" 2>/dev/null || true)
+            latest=$(fetch_uni_latest_version 6 2>/dev/null || true)
             [[ -n "$latest" ]] && echo "$latest" > "$cache_file"
         } &
         disown $! 2>/dev/null || true
@@ -1391,17 +1411,13 @@ cmd_self_update() {
     self_path=$(command -v uni 2>/dev/null || echo "$REAL_HOME/.local/bin/uni")
 
     info "Checking latest version..."
-    local latest_json latest_ver
-    
-    latest_json=$(curl -sf --max-time 10 \
-        -H "Accept: application/vnd.github+json" \
-        "https://api.github.com/repos/${UNI_REPO}/releases/latest" 2>/dev/null) \
-        || die "Could not reach GitHub. Check your connection."
-
-    latest_ver=$(python3 -c "import json,sys; d=json.loads(sys.argv[1]); tag=d.get('tag_name',''); print(tag.lstrip('v') if tag else '')" \
-        "$latest_json" 2>/dev/null || echo "")
-    
-    [[ -z "$latest_ver" ]] && die "Could not determine latest version from GitHub."
+    local latest_ver fetch_status
+    latest_ver=$(fetch_uni_latest_version 10); fetch_status=$?
+    case "$fetch_status" in
+        0) ;;
+        1) die "Could not reach GitHub. Check your connection." ;;
+        *) die "Could not determine latest version from GitHub." ;;
+    esac
 
     if ! version_gt "$latest_ver" "$UNI_VERSION"; then
         success "Already up to date (v${UNI_VERSION})."
