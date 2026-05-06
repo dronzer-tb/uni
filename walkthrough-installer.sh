@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================
-#  uni — installer (with built-in tutorial)
-#  Usage: curl -fsSL https://raw.githubusercontent.com/dronzer-tb/UNI/refs/heads/master/installer.sh | bash
+#  uni — walkthrough installer (with built-in tutorial)
+#  Usage: curl -fsSL https://raw.githubusercontent.com/dronzer-tb/UNI/refs/heads/master/walkthrough-installer.sh | bash
 #
 #  ⚠️  DISCLAIMER: This code was improved with the help of AI
 #  ============================================================

@@ -2,6 +2,20 @@
 
 All notable changes to uni are documented in this file.
 
+## [2.5.0] — 2026-05-06
+
+### Changed
+- `search_apt` now validates installable candidates via `apt-cache policy`, preventing false-positive virtual/uninstallable package matches.
+- Apt batch install path now propagates real failure exit codes and falls back correctly when no `.deb` files are produced.
+- AppImage, `.deb`, and archive install/remove flows now enforce explicit post-action checks before reporting success.
+
+### Fixed
+- Prevented false success + registry writes when apt install/remove/purge operations fail.
+- Added verification for apt install/remove state in single and batch install paths.
+- Hardened `cmd_remove` and `cmd_purge` (including unregistered fallback paths) so backend failures stop execution and report errors.
+- Improved AppImage removal behavior to warn on missing files while still cleaning registry state.
+- Improved `.deb` dependency-fix handling (`apt -f install`) and archive binary install checks (`cp`/`chmod`) with proper failure handling.
+
 ## [2.4.0] — 2026-04-29
 
 ### Added
@@ -117,6 +131,7 @@ This project follows [Semantic Versioning](https://semver.org/):
 For detailed information about changes, see git history or GitHub releases.
 
 ---
+[2.5.0]: https://github.com/dronzer-tb/UNI/releases/tag/v2.5.0
 [2.4.0]: https://github.com/dronzer-tb/UNI/releases/tag/v2.4.0
 [2.3.0]: https://github.com/dronzer-tb/UNI/releases/tag/v2.3.0
 [2.2.1]: https://github.com/dronzer-tb/UNI/releases/tag/v2.2.1

@@ -2,7 +2,7 @@
 
 > **One command to rule them all:** `uni install <pkg>` instead of `apt install`, `snap install`, or `flatpak install`
 
-![Version](https://img.shields.io/badge/version-2.4.0-blue)
+![Version](https://img.shields.io/badge/version-2.5.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Platform](https://img.shields.io/badge/platform-Linux-lightgrey)
 
@@ -15,7 +15,7 @@
 ### Installation (One-Liner)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dronzer-tb/UNI/refs/heads/master/installer.sh | bash
+curl -fsSL https://raw.githubusercontent.com/dronzer-tb/UNI/refs/heads/master/walkthrough-installer.sh | bash
 ```
 
 This single command will:
@@ -234,7 +234,7 @@ By default, `uni` is installed to `~/.local/bin`. To install elsewhere:
 
 ```bash
 # Modify the installer before running
-UNI_RAW_URL="..." INSTALL_DIR="/custom/path" bash installer.sh
+UNI_RAW_URL="..." INSTALL_DIR="/custom/path" bash walkthrough-installer.sh
 ```
 
 ---

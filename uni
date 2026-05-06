@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # ============================================================
-#  uni — Universal Package Manager Wrapper v2.4.0
+#  uni — Universal Package Manager Wrapper v2.5.0
 #  Commands: uni install | uni remove | uni purge | uni list
 #            uni update  | uni self-update | uni intercept
 #            uni uninstall | uni help | uni version
 #
-#  📚 Tutorial moved to installer.sh (run after installation)
+#  📚 Tutorial moved to walkthrough-installer.sh (run after installation)
 #  ⚠️  Code improved with AI assistance
 # ============================================================
 
 set -u
 
-UNI_VERSION="2.4.0"
+UNI_VERSION="2.5.0"
 UNI_REPO="dronzer-tb/UNI"   # ← set this to your GitHub repo
 UNI_RAW_URL="https://raw.githubusercontent.com/dronzer-tb/UNI/refs/heads/master/uni"
 
@@ -548,11 +548,13 @@ install_archive() {
     fi
 
     local install_dir="$REAL_HOME/.local/bin"
-    mkdir -p "$install_dir"
+    mkdir -p "$install_dir" || die "Could not create ${install_dir}"
     local bin_name
     bin_name=$(basename "$chosen_bin")
-    cp "$chosen_bin" "$install_dir/$bin_name"
-    chmod +x "$install_dir/$bin_name"
+    cp "$chosen_bin" "$install_dir/$bin_name" \
+        || { rm -rf "$tmpdir"; die "Could not copy binary to ${install_dir}"; }
+    chmod +x "$install_dir/$bin_name" \
+        || { rm -rf "$tmpdir"; die "Could not set executable bit on ${install_dir}/${bin_name}"; }
     rm -rf "$tmpdir"
 
     registry_add "$pkg_name" "archive" "$install_dir/$bin_name"
@@ -566,7 +568,10 @@ install_archive() {
 
 # ── Search functions ─────────────────────────────────────────
 search_apt() {
-    command -v apt-cache &>/dev/null && apt-cache show "$1" &>/dev/null && echo "apt"
+    command -v apt-cache &>/dev/null || return 1
+    local candidate
+    candidate=$(apt-cache policy "$1" 2>/dev/null | awk '/Candidate:/{print $2}')
+    [[ -n "$candidate" && "$candidate" != "(none)" ]] && echo "apt"
 }
 
 search_flatpak() {
@@ -735,11 +740,25 @@ remove_appimage() {
     local name="$1"
     local appimage_path
     appimage_path=$(registry_get "$name" "id")
-    [[ -f "$appimage_path" ]] && rm -f "$appimage_path" && success "Removed AppImage"
-    [[ -f "$UNI_DESKTOP_DIR/${name}.desktop" ]] && rm -f "$UNI_DESKTOP_DIR/${name}.desktop" && success "Removed desktop entry"
+
+    if [[ -f "$appimage_path" ]]; then
+        rm -f "$appimage_path" || die "Could not remove AppImage: ${appimage_path}"
+        success "Removed AppImage: ${appimage_path}"
+    else
+        warn "AppImage not found at recorded path: ${appimage_path}"
+    fi
+
+    if [[ -f "$UNI_DESKTOP_DIR/${name}.desktop" ]]; then
+        rm -f "$UNI_DESKTOP_DIR/${name}.desktop" \
+            && success "Removed desktop entry" \
+            || warn "Could not remove desktop entry"
+    fi
+
     for ext in png svg; do
-        [[ -f "$UNI_ICON_DIR/${name}.${ext}" ]] && rm -f "$UNI_ICON_DIR/${name}.${ext}"
+        local icon="$UNI_ICON_DIR/${name}.${ext}"
+        [[ -f "$icon" ]] && rm -f "$icon"
     done
+
     registry_remove "$name"
 }
 
@@ -765,12 +784,13 @@ install_deb() {
         success "Installed ${BOLD}${name}${RESET} via dpkg"
     else
         warn "dpkg errors — fixing dependencies..."
-        sudo "$(apt_cmd)" -f install -y
+        sudo "$(apt_cmd)" -f install -y \
+            || die "Dependency fix failed for ${BOLD}${name}${RESET}. Run: sudo apt -f install"
         if dpkg -s "$name" 2>/dev/null | grep -q "^Status: install ok installed"; then
             registry_add "$name" "dpkg" "$name"
             success "Installed ${BOLD}${name}${RESET} via dpkg (after fix)"
         else
-            die "Installation of ${name} failed."
+            die "Installation of ${BOLD}${name}${RESET} failed even after dependency fix."
         fi
     fi
 }
@@ -786,6 +806,20 @@ is_installed_flatpak() {
 
 is_installed_snap() {
     has_snap && snap list "$1" &>/dev/null
+}
+
+# ── Post-install / post-remove verification ──────────────────
+verify_apt_installed() {
+    local pkg="$1"
+    is_installed_apt "$pkg" \
+        || die "Installation of ${BOLD}${pkg}${RESET} failed — package not found after install."
+}
+
+verify_apt_removed() {
+    local pkg="$1"
+    is_installed_apt "$pkg" \
+        && die "Removal of ${BOLD}${pkg}${RESET} failed — package still installed after remove."
+    return 0
 }
 
 UNI_INSTALLED_IN=()
@@ -913,14 +947,17 @@ do_apt_install_many() {
             if [[ ${#debs[@]} -gt 0 ]]; then
                 sudo dpkg -i "${debs[@]}" 2>/dev/null || true
                 sudo "$(apt_cmd)" -f install -y
+                local rc=$?
                 rm -rf "$tmpdir"
-                return 0
+                return $rc
             fi
             rm -rf "$tmpdir"
+            # aria2c path produced no debs — fall through to regular apt
         fi
     fi
 
     sudo "$(apt_cmd)" install -y "${pkgs[@]}"
+    return $?
 }
 
 do_apt_install() {
@@ -971,7 +1008,8 @@ do_install() {
     local pkg="$1" chosen_source="$2"
     case "$chosen_source" in
         apt)
-            do_apt_install "$pkg"
+            do_apt_install "$pkg" || die "Failed to install ${BOLD}${pkg}${RESET} via $(apt_cmd)."
+            verify_apt_installed "$pkg"
             registry_add "$pkg" "apt" "$pkg"
             success "Installed ${BOLD}${pkg}${RESET} via $(apt_cmd)"
             ;;
@@ -1169,11 +1207,18 @@ cmd_install() {
     # Batch apt installs in one transaction when source is explicitly apt.
     if (( total > 1 )) && [[ "$forced_source" == "apt" ]]; then
         info "Installing (${total}) packages via ${BOLD}apt${RESET} in one batch..."
-        do_apt_install_many "${pkgs[@]}"
+        do_apt_install_many "${pkgs[@]}" || die "Batch apt install failed."
+        local any_failed=0
         for pkg in "${pkgs[@]}"; do
-            registry_add "$pkg" "apt" "$pkg"
-            success "Installed ${BOLD}${pkg}${RESET} via $(apt_cmd)"
+            if is_installed_apt "$pkg"; then
+                registry_add "$pkg" "apt" "$pkg"
+                success "Installed ${BOLD}${pkg}${RESET} via $(apt_cmd)"
+            else
+                error "Failed to install ${BOLD}${pkg}${RESET} — not found after apt run."
+                any_failed=1
+            fi
         done
+        [[ $any_failed -eq 1 ]] && exit 1
         return
     fi
 
@@ -1216,15 +1261,23 @@ cmd_remove() {
     if [[ -z "$backend" ]]; then
         warn "'${pkg}' not in uni registry — trying all backends..."
         if is_installed_apt "$pkg"; then
-            sudo "$(apt_cmd)" remove -y "$pkg"
+            sudo "$(apt_cmd)" remove -y "$pkg" || die "apt remove failed for ${BOLD}${pkg}${RESET}."
+            verify_apt_removed "$pkg"
+            success "Removed ${BOLD}${pkg}${RESET}"
         elif is_installed_flatpak "$pkg"; then
             local appid
             appid=$(flatpak list --columns=application,name 2>/dev/null | grep -i "$pkg" | head -1 | awk '{print $1}')
-            [[ -n "$appid" ]] \
-                && flatpak uninstall --noninteractive -y "$appid" \
-                || flatpak uninstall -y "$pkg"
+            if [[ -n "$appid" ]]; then
+                flatpak uninstall --noninteractive -y "$appid" \
+                    || die "flatpak uninstall failed for ${BOLD}${pkg}${RESET}."
+            else
+                flatpak uninstall -y "$pkg" \
+                    || die "flatpak uninstall failed for ${BOLD}${pkg}${RESET}."
+            fi
+            success "Removed ${BOLD}${pkg}${RESET}"
         elif is_installed_snap "$pkg"; then
-            sudo snap remove "$pkg"
+            sudo snap remove "$pkg" || die "snap remove failed for ${BOLD}${pkg}${RESET}."
+            success "Removed ${BOLD}${pkg}${RESET}"
         else
             die "'${pkg}' not found in any backend."
         fi
@@ -1234,13 +1287,31 @@ cmd_remove() {
     info "Removing ${BOLD}${pkg}${RESET} [${backend}]..."
 
     case "$backend" in
-        apt)      sudo "$(apt_cmd)" remove -y "$id" ;;
-        dpkg)     sudo dpkg -r "$id" || sudo "$(apt_cmd)" remove -y "$id" ;;
-        flatpak)  flatpak uninstall --noninteractive -y "$id" ;;
-        snap)     sudo snap remove "$id" ;;
+        apt)
+            sudo "$(apt_cmd)" remove -y "$id" || die "apt remove failed for ${BOLD}${pkg}${RESET}."
+            verify_apt_removed "$id"
+            ;;
+        dpkg)
+            sudo dpkg -r "$id" || sudo "$(apt_cmd)" remove -y "$id" \
+                || die "Failed to remove ${BOLD}${pkg}${RESET}."
+            verify_apt_removed "$id"
+            ;;
+        flatpak)
+            flatpak uninstall --noninteractive -y "$id" \
+                || die "flatpak uninstall failed for ${BOLD}${pkg}${RESET}."
+            ;;
+        snap)
+            sudo snap remove "$id" \
+                || die "snap remove failed for ${BOLD}${pkg}${RESET}."
+            ;;
         appimage) remove_appimage "$pkg"; return ;;
         archive)
-            [[ -f "$id" ]] && rm -f "$id" && success "Removed binary: ${id}"
+            if [[ -f "$id" ]]; then
+                rm -f "$id" || die "Could not remove binary: ${id}"
+                success "Removed binary: ${id}"
+            else
+                warn "Binary not found at recorded path: ${id}"
+            fi
             registry_remove "$pkg"; return
             ;;
     esac
@@ -1262,16 +1333,24 @@ cmd_purge() {
     if [[ -z "$backend" ]]; then
         warn "'${pkg}' not in uni registry — trying all backends..."
         if is_installed_apt "$pkg"; then
-            sudo "$(apt_cmd)" purge -y "$pkg" && sudo "$(apt_cmd)" autoremove -y
+            sudo "$(apt_cmd)" purge -y "$pkg" || die "apt purge failed for ${BOLD}${pkg}${RESET}."
+            verify_apt_removed "$pkg"
+            sudo "$(apt_cmd)" autoremove -y || warn "autoremove encountered errors (non-fatal)."
+            success "Purged ${BOLD}${pkg}${RESET}"
         elif is_installed_flatpak "$pkg"; then
             local appid
             appid=$(flatpak list --columns=application,name 2>/dev/null | grep -i "$pkg" | head -1 | awk '{print $1}')
             if [[ -n "$appid" ]]; then
-                flatpak uninstall --noninteractive -y "$appid"
-                rm -rf "$REAL_HOME/.var/app/$appid"
+                flatpak uninstall --noninteractive -y "$appid" \
+                    || die "flatpak uninstall failed for ${BOLD}${pkg}${RESET}."
+                rm -rf "$REAL_HOME/.var/app/$appid" || true
+                success "Purged ${BOLD}${pkg}${RESET}"
+            else
+                die "Could not resolve flatpak ID for '${pkg}'."
             fi
         elif is_installed_snap "$pkg"; then
-            sudo snap remove --purge "$pkg"
+            sudo snap remove --purge "$pkg" || die "snap remove --purge failed for ${BOLD}${pkg}${RESET}."
+            success "Purged ${BOLD}${pkg}${RESET}"
         else
             die "'${pkg}' not found in any backend."
         fi
@@ -1282,18 +1361,32 @@ cmd_purge() {
 
     case "$backend" in
         apt|dpkg)
-            sudo "$(apt_cmd)" purge -y "$id"
-            sudo "$(apt_cmd)" autoremove -y
+            sudo "$(apt_cmd)" purge -y "$id" || die "apt purge failed for ${BOLD}${pkg}${RESET}."
+            verify_apt_removed "$id"
+            sudo "$(apt_cmd)" autoremove -y || warn "autoremove encountered errors (non-fatal)."
             ;;
         flatpak)
-            flatpak uninstall --noninteractive -y "$id"
+            flatpak uninstall --noninteractive -y "$id" \
+                || die "flatpak uninstall failed for ${BOLD}${pkg}${RESET}."
             local flatpak_data="$REAL_HOME/.var/app/$id"
-            [[ -d "$flatpak_data" ]] && rm -rf "$flatpak_data" && success "Removed app data: ${flatpak_data}"
+            if [[ -d "$flatpak_data" ]]; then
+                rm -rf "$flatpak_data" \
+                    && success "Removed app data: ${flatpak_data}" \
+                    || warn "Could not remove app data: ${flatpak_data}"
+            fi
             ;;
-        snap)     sudo snap remove --purge "$id" ;;
+        snap)
+            sudo snap remove --purge "$id" \
+                || die "snap remove --purge failed for ${BOLD}${pkg}${RESET}."
+            ;;
         appimage) remove_appimage "$pkg"; return ;;
         archive)
-            [[ -f "$id" ]] && rm -f "$id" && success "Removed binary: ${id}"
+            if [[ -f "$id" ]]; then
+                rm -f "$id" || die "Could not remove binary: ${id}"
+                success "Removed binary: ${id}"
+            else
+                warn "Binary not found at recorded path: ${id}"
+            fi
             registry_remove "$pkg"; return
             ;;
     esac

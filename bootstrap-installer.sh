@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # ============================================================
-#  uni — Single-line installer (minimal & memorable)
+#  uni — bootstrap installer (minimal & memorable)
 #  Copy-paste into terminal:
 #
-#  bash <(curl -fsSL https://raw.githubusercontent.com/dronzer-tb/UNI/refs/heads/master/uni-install)
+#  bash <(curl -fsSL https://raw.githubusercontent.com/dronzer-tb/UNI/refs/heads/master/bootstrap-installer.sh)
 #
 #  Even shorter (if you prefer):
-#  curl -fsSL https://raw.githubusercontent.com/dronzer-tb/UNI/refs/heads/master/uni-install | bash
+#  curl -fsSL https://raw.githubusercontent.com/dronzer-tb/UNI/refs/heads/master/bootstrap-installer.sh | bash
 #
 #  ⚠️  DISCLAIMER: Code improved with AI help
 #  ============================================================
