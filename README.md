@@ -2,7 +2,7 @@
 
 > **One command to rule them all:** `uni install <pkg>` instead of `apt install`, `snap install`, or `flatpak install`
 
-![Version](https://img.shields.io/badge/version-2.5.0-blue)
+![Version](https://img.shields.io/badge/version-0.5.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Platform](https://img.shields.io/badge/platform-Linux-lightgrey)
 

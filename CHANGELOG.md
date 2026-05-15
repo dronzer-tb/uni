@@ -2,7 +2,12 @@
 
 All notable changes to uni are documented in this file.
 
-## [2.5.0] — 2026-05-06
+## [0.5.0] — 2026-05-06
+
+### Changed
+- Reset version scheme from 2.x.x to 0.x.x. Latest version is now `0.5.0` (previously `2.5.0`).
+
+
 
 ### Changed
 - `search_apt` now validates installable candidates via `apt-cache policy`, preventing false-positive virtual/uninstallable package matches.
@@ -131,7 +136,7 @@ This project follows [Semantic Versioning](https://semver.org/):
 For detailed information about changes, see git history or GitHub releases.
 
 ---
-[2.5.0]: https://github.com/dronzer-tb/UNI/releases/tag/v2.5.0
+[0.5.0]: https://github.com/dronzer-tb/UNI/releases/tag/v0.5.0
 [2.4.0]: https://github.com/dronzer-tb/UNI/releases/tag/v2.4.0
 [2.3.0]: https://github.com/dronzer-tb/UNI/releases/tag/v2.3.0
 [2.2.1]: https://github.com/dronzer-tb/UNI/releases/tag/v2.2.1
