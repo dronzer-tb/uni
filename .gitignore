@@ -1,0 +1,24 @@
+# uni-ui build artifacts
+uni-ui/build/
+uni-ui/build-*/
+*.o
+*.obj
+*.so
+*.a
+*.exe
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+CMakeUserPresets.json
+cmake_install.cmake
+Makefile
+compile_commands.json
+
+# Qt
+moc_*.cpp
+moc_*.h
+qrc_*.cpp
+ui_*.h
+*.user
+*.user.*

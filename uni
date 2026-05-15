@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # ============================================================
-#  uni — Universal Package Manager Wrapper v0.5.0
+#  uni — Universal Package Manager Wrapper v0.6.0-dev
 #  Commands: uni install | uni remove | uni purge | uni list
+#            uni search  | uni info   | uni index | uni sources
 #            uni update  | uni self-update | uni intercept
 #            uni uninstall | uni help | uni version
 #
@@ -11,7 +12,7 @@
 
 set -u
 
-UNI_VERSION="0.5.0"
+UNI_VERSION="0.6.0-dev"
 UNI_REPO="dronzer-tb/UNI"   # ← set this to your GitHub repo
 UNI_RAW_URL="https://raw.githubusercontent.com/dronzer-tb/UNI/refs/heads/master/uni"
 
@@ -25,9 +26,14 @@ UNI_REGISTRY="$REAL_HOME/.local/share/uni/installed.json"
 UNI_APPIMAGE_DIR="$REAL_HOME/.local/share/uni/appimages"
 UNI_DESKTOP_DIR="$REAL_HOME/.local/share/applications"
 UNI_ICON_DIR="$REAL_HOME/.local/share/uni/icons"
+UNI_DATA_DIR="$REAL_HOME/.local/share/uni"
+UNI_INDEX_DB="$UNI_DATA_DIR/index.db"
+UNI_SOURCES_JSON="$UNI_DATA_DIR/sources.json"
 UNI_CACHE_DIR="$REAL_HOME/.cache/uni"
 UNI_CACHE_TTL=3600          # 1 hour for search cache
+UNI_SOURCES_TTL=3600        # 1 hour for source benchmark cache
 UNI_UPDATE_CHECK_TTL=86400  # 24 hours for update-notifier check
+UNI_JSON=0                  # set to 1 by --json flag; routes UI helpers to stderr and emits events
 
 # ── Colors ───────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -41,14 +47,45 @@ DIM='\033[2m'
 RESET='\033[0m'
 
 # ── UI Helpers ───────────────────────────────────────────────
-info()    { echo -e "${CYAN}${BOLD} → ${RESET} $*"; }
-success() { echo -e "${GREEN}${BOLD} ✓ ${RESET} $*"; }
-warn()    { echo -e "${YELLOW}${BOLD} ! ${RESET} $*"; }
+# In JSON mode (UNI_JSON=1) all human-readable output goes to stderr so
+# stdout stays a clean newline-delimited JSON event stream.
+info()    { if (( UNI_JSON )); then echo -e "${CYAN}${BOLD} → ${RESET} $*" >&2; else echo -e "${CYAN}${BOLD} → ${RESET} $*"; fi; }
+success() { if (( UNI_JSON )); then echo -e "${GREEN}${BOLD} ✓ ${RESET} $*" >&2; else echo -e "${GREEN}${BOLD} ✓ ${RESET} $*"; fi; }
+warn()    { if (( UNI_JSON )); then echo -e "${YELLOW}${BOLD} ! ${RESET} $*" >&2; else echo -e "${YELLOW}${BOLD} ! ${RESET} $*"; fi; }
 error()   { echo -e "${RED}${BOLD} ✗ ${RESET} $*" >&2; }
-die()     { error "$*"; exit 1; }
-step()    { echo -e "${MAGENTA}${BOLD} ⠿ ${RESET}${DIM}$*${RESET}"; }
-divider() { echo -e "${DIM}────────────────────────────────────────${RESET}"; }
-header()  { echo ""; echo -e "${BOLD}${BLUE}$*${RESET}"; divider; }
+die()     {
+    if (( UNI_JSON )) && [[ -n "${UNI_JSON_PKG:-}" ]]; then
+        emit_event "$UNI_JSON_PKG" "done" "success=false" "error=$*"
+    fi
+    error "$*"; exit 1;
+}
+step()    { if (( UNI_JSON )); then echo -e "${MAGENTA}${BOLD} ⠿ ${RESET}${DIM}$*${RESET}" >&2; else echo -e "${MAGENTA}${BOLD} ⠿ ${RESET}${DIM}$*${RESET}"; fi; }
+divider() { if (( UNI_JSON )); then echo -e "${DIM}────────────────────────────────────────${RESET}" >&2; else echo -e "${DIM}────────────────────────────────────────${RESET}"; fi; }
+header()  { if (( UNI_JSON )); then echo "" >&2; echo -e "${BOLD}${BLUE}$*${RESET}" >&2; divider; else echo ""; echo -e "${BOLD}${BLUE}$*${RESET}"; divider; fi; }
+
+# Emit a single newline-delimited JSON event to stdout (JSON mode).
+# Usage: emit_event <package> <stage> [key=val]...
+# stage is one of: resolving, downloading, installing, done.
+emit_event() {
+    (( UNI_JSON )) || return 0
+    local pkg="$1" stage="$2"; shift 2
+    python3 - "$pkg" "$stage" "$@" <<'PY' 2>/dev/null || true
+import json, sys
+pkg, stage = sys.argv[1], sys.argv[2]
+ev = {"package": pkg, "stage": stage}
+for kv in sys.argv[3:]:
+    if "=" not in kv: continue
+    k, v = kv.split("=", 1)
+    if v in ("true", "false"):
+        ev[k] = (v == "true")
+    else:
+        try: ev[k] = int(v)
+        except ValueError:
+            try: ev[k] = float(v)
+            except ValueError: ev[k] = v
+print(json.dumps(ev), flush=True)
+PY
+}
 
 # ── Spinner ──────────────────────────────────────────────────
 _SPIN_PID=""
@@ -1036,12 +1073,18 @@ cmd_install_one() {
     local pkg="$1"
     local forced_source="${2:-}"
 
+    # JSON event correlation: die() uses UNI_JSON_PKG to emit done/error events.
+    UNI_JSON_PKG="$pkg"
+    emit_event "$pkg" "resolving"
+
     # GitHub URL or user/repo shorthand
     local maybe_repo
     maybe_repo=$(parse_github_repo "$pkg")
     if [[ -n "$maybe_repo" ]]; then
         GH_REPO="$maybe_repo"
+        emit_event "$pkg" "downloading" "backend=github" "source=$GH_REPO"
         install_from_github "$GH_REPO"
+        emit_event "$pkg" "done" "success=true" "backend=github"
         return
     fi
 
@@ -1160,14 +1203,19 @@ cmd_install_one() {
 
     if [[ "$chosen_source" == github* ]]; then
         GH_REPO="$gh_result"
+        emit_event "$pkg" "downloading" "backend=github" "source=$GH_REPO"
         install_from_github "$GH_REPO"
+        emit_event "$pkg" "done" "success=true" "backend=github"
     else
+        emit_event "$pkg" "downloading" "backend=$chosen_source"
+        emit_event "$pkg" "installing" "backend=$chosen_source"
         do_install "$pkg" "$chosen_source"
+        emit_event "$pkg" "done" "success=true" "backend=$chosen_source"
     fi
 }
 
 cmd_install() {
-    # Parse flags: uni install <pkg...> [--source apt|flatpak|snap|github] [--parallel]
+    # Parse flags: uni install <pkg...> [--source apt|flatpak|snap|github] [--parallel] [--json]
     local forced_source=""
     local install_parallel=0
     local pkgs=()
@@ -1187,6 +1235,10 @@ cmd_install() {
                 ;;
             --parallel|-p)
                 install_parallel=1
+                shift
+                ;;
+            --json)
+                UNI_JSON=1
                 shift
                 ;;
             *)
@@ -1570,6 +1622,334 @@ cmd_self_update() {
 }
 
 
+# ── INDEX / SEARCH / SOURCES / INFO (0.6.0) ──────────────────
+# Local SQLite (FTS5) package index that powers the Qt UI's fast search.
+# The CLI uses this index opportunistically; the existing live `parallel_search`
+# path remains the default for `uni install` and is the fallback when no index exists.
+
+_ensure_index_schema() {
+    local db="$1"
+    command -v sqlite3 >/dev/null 2>&1 || die "sqlite3 is required for indexing. Install: uni install sqlite3 --source apt"
+    mkdir -p "$(dirname "$db")"
+    sqlite3 "$db" <<'SQL'
+PRAGMA journal_mode=WAL;
+CREATE VIRTUAL TABLE IF NOT EXISTS pkgs USING fts5(
+    name,
+    description,
+    version UNINDEXED,
+    backend UNINDEXED,
+    source_url UNINDEXED,
+    size_bytes UNINDEXED,
+    last_seen UNINDEXED,
+    tokenize='porter unicode61'
+);
+SQL
+}
+
+_index_apt() {
+    local db="$1" now="$2"
+    has_apt || return 0
+    info "Indexing apt..."
+    apt-cache dumpavail 2>/dev/null | python3 - "$db" "$now" <<'PY'
+import sys, sqlite3, re
+db_path, now = sys.argv[1], int(sys.argv[2])
+conn = sqlite3.connect(db_path); cur = conn.cursor()
+rows, pkg = [], {}
+def flush():
+    if pkg.get('name'):
+        rows.append((
+            pkg['name'],
+            pkg.get('description', '')[:500],
+            pkg.get('version', ''),
+            'apt', '',
+            int(pkg.get('size', '0') or 0),
+            now,
+        ))
+for line in sys.stdin:
+    if line.strip() == '':
+        flush(); pkg = {}; continue
+    if line.startswith(' '): continue
+    m = re.match(r'^([A-Za-z-]+):\s*(.*)', line)
+    if not m: continue
+    k, v = m.group(1).lower(), m.group(2).strip()
+    if   k == 'package':     pkg['name'] = v
+    elif k == 'description' and 'description' not in pkg: pkg['description'] = v
+    elif k == 'version' and 'version' not in pkg: pkg['version'] = v
+    elif k == 'installed-size': pkg['size'] = v
+flush()
+cur.executemany(
+    'INSERT INTO pkgs (name, description, version, backend, source_url, size_bytes, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    rows,
+)
+conn.commit(); conn.close()
+print(f'  → {len(rows)} apt packages', file=sys.stderr)
+PY
+}
+
+_index_flatpak() {
+    local db="$1" now="$2"
+    has_flatpak || return 0
+    info "Indexing flatpak..."
+    flatpak remote-ls --app --columns=application,name,version,description,size 2>/dev/null \
+        | python3 - "$db" "$now" <<'PY'
+import sys, sqlite3
+db_path, now = sys.argv[1], int(sys.argv[2])
+conn = sqlite3.connect(db_path); cur = conn.cursor()
+rows = []
+for line in sys.stdin:
+    parts = line.rstrip('\n').split('\t')
+    if len(parts) < 2: continue
+    app_id = parts[0].strip()
+    name   = parts[1].strip() if len(parts) > 1 else app_id
+    ver    = parts[2].strip() if len(parts) > 2 else ''
+    desc   = parts[3].strip() if len(parts) > 3 else ''
+    raw_sz = parts[4].strip() if len(parts) > 4 else ''
+    # raw_sz can be "12.3 MB" — best effort parse to bytes
+    size = 0
+    try:
+        num, unit = raw_sz.split()[0], (raw_sz.split()[1] if len(raw_sz.split()) > 1 else 'B').upper()
+        mult = {'B':1,'KB':1024,'MB':1024**2,'GB':1024**3}.get(unit, 1)
+        size = int(float(num) * mult)
+    except Exception:
+        size = 0
+    rows.append((name or app_id, desc, ver, 'flatpak', app_id, size, now))
+cur.executemany(
+    'INSERT INTO pkgs (name, description, version, backend, source_url, size_bytes, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    rows,
+)
+conn.commit(); conn.close()
+print(f'  → {len(rows)} flatpak packages', file=sys.stderr)
+PY
+}
+
+cmd_index() {
+    local refresh=0
+    for arg in "$@"; do
+        case "$arg" in
+            --refresh) refresh=1 ;;
+        esac
+    done
+
+    _ensure_index_schema "$UNI_INDEX_DB"
+
+    if (( ! refresh )); then
+        header "uni index"
+        local count
+        count=$(sqlite3 "$UNI_INDEX_DB" "SELECT COUNT(*) FROM pkgs;" 2>/dev/null || echo 0)
+        info "Index: ${BOLD}${count}${RESET} packages at ${DIM}${UNI_INDEX_DB}${RESET}"
+        info "Refresh with: ${BOLD}uni index --refresh${RESET}"
+        return 0
+    fi
+
+    header "uni index --refresh"
+    local now
+    now=$(date +%s)
+
+    # Clear and rebuild. WAL readers continue to see the previous snapshot
+    # until each backend's INSERT transaction commits.
+    sqlite3 "$UNI_INDEX_DB" "DELETE FROM pkgs;"
+    _index_apt     "$UNI_INDEX_DB" "$now"
+    _index_flatpak "$UNI_INDEX_DB" "$now"
+    # snap and github are intentionally not enumerable — searched live only.
+
+    local count
+    count=$(sqlite3 "$UNI_INDEX_DB" "SELECT COUNT(*) FROM pkgs;")
+    success "Indexed ${BOLD}${count}${RESET} packages."
+}
+
+_search_cached() {
+    local query="$1"
+    [[ -f "$UNI_INDEX_DB" ]] || die "Index not built. Run: uni index --refresh"
+    python3 - "$UNI_INDEX_DB" "$UNI_SOURCES_JSON" "$query" <<'PY'
+import sys, sqlite3, json, os
+db, sources_path, q = sys.argv[1], sys.argv[2], sys.argv[3]
+sources = {}
+if os.path.exists(sources_path):
+    try:
+        with open(sources_path) as f: sources = json.load(f)
+    except Exception: sources = {}
+conn = sqlite3.connect(db); cur = conn.cursor()
+# Escape FTS5 special chars, then prefix-match each token.
+safe = ''.join(c for c in q if c.isalnum() or c in ' -_.+')
+tokens = [t for t in safe.split() if t]
+if not tokens:
+    print('[]'); sys.exit(0)
+fts_q = ' '.join(t + '*' for t in tokens)
+try:
+    cur.execute(
+        'SELECT name, description, version, backend, source_url, size_bytes '
+        'FROM pkgs WHERE pkgs MATCH ? ORDER BY rank LIMIT 200',
+        (fts_q,),
+    )
+    rows = cur.fetchall()
+except sqlite3.OperationalError:
+    rows = []
+ql = q.lower()
+out = []
+for name, desc, ver, backend, url, size in rows:
+    rank = sources.get(backend, {}).get('rank', 99)
+    out.append({
+        'name': name,
+        'description': desc,
+        'version': ver,
+        'backend': backend,
+        'source_url': url,
+        'size_bytes': int(size) if str(size).isdigit() else 0,
+        'source_speed_rank': rank,
+    })
+out.sort(key=lambda r: (0 if r['name'].lower() == ql else 1, r['source_speed_rank']))
+print(json.dumps(out))
+PY
+}
+
+cmd_search() {
+    local cached=0 query=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --cached)  cached=1; shift ;;
+            --json)    UNI_JSON=1; cached=1; shift ;;
+            --) shift; break ;;
+            -*) shift ;;
+            *)  query="$1"; shift ;;
+        esac
+    done
+    [[ -z "$query" ]] && die "Usage: uni search [--cached] <query>"
+
+    if (( cached )); then
+        _search_cached "$query"
+        return $?
+    fi
+
+    header "uni search ${query}"
+    info "Live search (use ${BOLD}--cached${RESET} for the local index)..."
+    parallel_search "$query"
+}
+
+cmd_sources() {
+    local do_bench=0 force=0
+    for arg in "$@"; do
+        case "$arg" in
+            --benchmark) do_bench=1 ;;
+            --force)     force=1 ;;
+        esac
+    done
+
+    mkdir -p "$UNI_DATA_DIR"
+
+    # Serve cached if fresh and benchmark not forced.
+    if (( do_bench )) && [[ -f "$UNI_SOURCES_JSON" ]] && (( ! force )); then
+        local age now mtime
+        now=$(date +%s)
+        mtime=$(stat -c %Y "$UNI_SOURCES_JSON" 2>/dev/null || echo 0)
+        age=$(( now - mtime ))
+        if (( age < UNI_SOURCES_TTL )); then
+            cat "$UNI_SOURCES_JSON"
+            return 0
+        fi
+    fi
+
+    if (( ! do_bench )); then
+        [[ -f "$UNI_SOURCES_JSON" ]] && cat "$UNI_SOURCES_JSON" || echo '{}'
+        return 0
+    fi
+
+    # One canonical small probe URL per backend.
+    local apt_probe="http://archive.ubuntu.com/ubuntu/dists/jammy/InRelease"
+    local fp_probe="https://dl.flathub.org/repo/summary"
+    local sn_probe="https://api.snapcraft.io/v2/snaps/info/hello?architecture=amd64&fields=name"
+    local gh_probe="https://raw.githubusercontent.com/torvalds/linux/master/README"
+
+    _probe() {
+        curl -sS --max-time 8 -o /dev/null \
+            -w '%{speed_download} %{time_total}' "$1" 2>/dev/null || echo "0 0"
+    }
+
+    local apt_r fp_r sn_r gh_r
+    apt_r=$(_probe "$apt_probe")
+    fp_r=$( _probe "$fp_probe")
+    sn_r=$( _probe "$sn_probe")
+    gh_r=$( _probe "$gh_probe")
+
+    python3 - "$UNI_SOURCES_JSON" "$apt_r" "$fp_r" "$sn_r" "$gh_r" <<'PY'
+import sys, json
+out_path = sys.argv[1]
+def parse(s):
+    p = s.split()
+    if len(p) < 2: return (0.0, 0)
+    try:
+        bps = float(p[0]); t = float(p[1])
+    except ValueError: return (0.0, 0)
+    return (round(bps * 8 / 1_000_000, 1), int(t * 1000))
+
+names = ('apt', 'flatpak', 'snap', 'github')
+data = {}
+for name, raw in zip(names, sys.argv[2:]):
+    mbps, lat = parse(raw)
+    data[name] = {'speed_mbps': mbps, 'latency_ms': lat}
+order = sorted(names, key=lambda k: -data[k]['speed_mbps'])
+for i, b in enumerate(order, 1):
+    data[b]['rank'] = i
+with open(out_path, 'w') as f:
+    json.dump(data, f, indent=2)
+print(json.dumps(data))
+PY
+}
+
+cmd_info() {
+    local pkg="" json_mode=0
+    for arg in "$@"; do
+        case "$arg" in
+            --json) json_mode=1 ;;
+            -*) ;;
+            *) [[ -z "$pkg" ]] && pkg="$arg" ;;
+        esac
+    done
+    [[ -z "$pkg" ]] && die "Usage: uni info <package> [--json]"
+
+    if has_apt && apt-cache show "$pkg" 2>/dev/null | head -1 | grep -q '^Package:'; then
+        if (( json_mode )); then
+            apt-cache show "$pkg" 2>/dev/null | python3 - "$pkg" <<'PY'
+import sys, json, re
+target = sys.argv[1]
+out = {'backend': 'apt', 'name': target, 'depends': []}
+for line in sys.stdin:
+    if line.strip() == '' and 'name' in out: break
+    if line.startswith(' '): continue
+    m = re.match(r'^([A-Za-z-]+):\s*(.*)', line)
+    if not m: continue
+    k, v = m.group(1).lower(), m.group(2).strip()
+    if   k == 'package':     out['name'] = v
+    elif k == 'version' and 'version' not in out: out['version'] = v
+    elif k == 'description' and 'description' not in out: out['description'] = v
+    elif k == 'homepage':    out['homepage'] = v
+    elif k == 'depends':
+        out['depends'] = [d.split()[0].strip() for d in v.split(',') if d.strip()]
+    elif k == 'installed-size' and v.isdigit():
+        out['size_kb'] = int(v)
+print(json.dumps(out))
+PY
+        else
+            apt-cache show "$pkg" 2>/dev/null | sed -n '1,/^$/p'
+        fi
+        return 0
+    fi
+
+    if has_flatpak && flatpak info "$pkg" >/dev/null 2>&1; then
+        if (( json_mode )); then
+            python3 - "$pkg" <<PY
+import json
+print(json.dumps({'backend': 'flatpak', 'name': '$pkg', 'depends': []}))
+PY
+        else
+            flatpak info "$pkg"
+        fi
+        return 0
+    fi
+
+    die "Package not found: $pkg"
+}
+
+
 # ── INTERCEPT ────────────────────────────────────────────────
 # Writes shell functions to the user's rc file that wrap apt/nala/snap/flatpak
 # so they all route through uni. `uni intercept off` removes them.
@@ -1706,9 +2086,14 @@ cmd_help() {
     echo -e "  ${BOLD}uni self-update${RESET}                      Update uni itself"
     echo -e "  ${BOLD}uni uninstall${RESET}                        Remove uni completely"
     echo -e "  ${BOLD}uni intercept${RESET} [on|off|status]        Route apt/snap/flatpak through uni"
+    echo -e "  ${BOLD}uni search${RESET}  <query> [${CYAN}--cached${RESET}]      Search live or via local index"
+    echo -e "  ${BOLD}uni info${RESET}    <package> [${CYAN}--json${RESET}]      Show package metadata"
+    echo -e "  ${BOLD}uni index${RESET}   [${CYAN}--refresh${RESET}]              Local SQLite package index"
+    echo -e "  ${BOLD}uni sources${RESET} [${CYAN}--benchmark${RESET}]            Source speed benchmarks (used by uni-ui)"
     echo -e "  ${BOLD}uni version${RESET}                          Print version"
     divider
     echo -e "  ${DIM}--source values: apt  flatpak  snap  github${RESET}"
+    echo -e "  ${DIM}--json (install/info/search): newline-delimited JSON output for uni-ui${RESET}"
     echo -e "  ${DIM}Backends: $(apt_cmd) · flatpak · snap · dpkg · appimage · github · archive${RESET}"
     echo -e "  ${DIM}Optional: aria2c (parallel downloads) — sudo apt install aria2${RESET}"
     echo ""
@@ -1730,6 +2115,10 @@ main() {
         self-update|--update)   cmd_self_update "$@" ;;
         uninstall)              cmd_uninstall ;;
         intercept)              cmd_intercept "$@" ;;
+        search)                 cmd_search  "$@" ;;
+        info)                   cmd_info    "$@" ;;
+        index)                  cmd_index   "$@" ;;
+        sources)                cmd_sources "$@" ;;
         
         version|--version|-V)   echo "uni v${UNI_VERSION}" ;;
         help|--help|-h)         cmd_help ;;

@@ -2,6 +2,31 @@
 
 All notable changes to uni are documented in this file.
 
+## [0.6.0-dev] — unreleased
+
+### Added — CLI
+- `uni search <query> [--cached]` — top-level search command. `--cached` queries a local SQLite FTS5 index for sub-second results; without it, the existing live parallel search is used.
+- `uni index [--refresh]` — builds/inspects the local index at `~/.local/share/uni/index.db`. Currently enumerates `apt` (via `apt-cache dumpavail`) and `flatpak` (via `flatpak remote-ls`). Snap/GitHub are intentionally live-search only.
+- `uni sources [--benchmark]` — measures download speed/latency per backend and writes `~/.local/share/uni/sources.json`. Cached results served within 1h TTL.
+- `uni info <package> [--json]` — package metadata; JSON form includes name/version/description/depends/homepage/size.
+- `uni install --json <package>` — newline-delimited JSON event stream for UI consumers. Events: `resolving`, `downloading`, `installing`, `done`. Each event carries a `package` field so UIs can demux concurrent installs.
+
+### Added — Qt6 UI (`uni-ui`)
+- New `uni-ui/` subproject — Qt6/C++17 native frontend that shells out to `uni` for all package operations.
+- `MainWindow` with `SearchBar` (150ms debounce), `ResultsView` (custom delegate with backend badges + source speed dots), `PackageDetailPane`, and a persistent `DownloadQueue`.
+- `ProcessManager` mediates all subprocess calls; `IndexWatcher` re-runs the active query on index DB changes; `SourceBenchmark` reads cached sources and refreshes live.
+- Industrial terminal-glass theme (PRD §6) applied via QSS + `Theme::Color` tokens.
+
+### Added — Packaging
+- `packaging/uni.desktop` — XDG desktop entry.
+- `packaging/uni-index.{service,timer}` — systemd user units for automatic index refresh every 6h.
+- `packaging/install-ui.sh` — builds and installs the UI, desktop entry, and timer to user-local paths.
+
+### Notes / known limitations
+- `--json` install events emit stage transitions but not real download progress percentage. Progress percentage requires parsing apt/flatpak stderr line-by-line and is deferred.
+- The detail pane does not yet animate in, list all sources for the same package, or surface dependency lists from `uni info`. Tracked for 0.6.1.
+- IBM Plex fonts are referenced in QSS but not bundled in the QRC — system fallback fonts are used until bundled.
+
 ## [0.5.0] — 2026-05-06
 
 ### Changed
