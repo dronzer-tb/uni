@@ -1500,6 +1500,13 @@ cmd_uninstall() {
 cmd_self_update() {
     header "uni self-update"
 
+    local force=0
+    for arg in "$@"; do
+        case "$arg" in
+            -f|--force) force=1 ;;
+        esac
+    done
+
     local self_path
     self_path=$(command -v uni 2>/dev/null || echo "$REAL_HOME/.local/bin/uni")
 
@@ -1530,8 +1537,12 @@ cmd_self_update() {
     fi
 
     if version_gt "$UNI_VERSION" "$latest_ver"; then
-        rm -f "$tmp"
-        die "Remote version (v${latest_ver}) is older than installed (v${UNI_VERSION}). Aborting."
+        if (( force )); then
+            warn "Remote version (v${latest_ver}) is older than installed (v${UNI_VERSION}). Forcing as requested."
+        else
+            rm -f "$tmp"
+            die "Remote version (v${latest_ver}) is older than installed (v${UNI_VERSION}). Aborting. (Use 'uni self-update --force' to override.)"
+        fi
     fi
 
     if version_gt "$latest_ver" "$UNI_VERSION"; then
@@ -1716,7 +1727,7 @@ main() {
         purge)                  cmd_purge   "$@" ;;
         list)                   cmd_list ;;
         update)                 cmd_update ;;
-        self-update|--update)   cmd_self_update ;;
+        self-update|--update)   cmd_self_update "$@" ;;
         uninstall)              cmd_uninstall ;;
         intercept)              cmd_intercept "$@" ;;
         
