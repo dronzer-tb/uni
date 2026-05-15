@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=uni
+GenericName=Package Manager
+Comment=Universal package manager for apt, flatpak, snap, and GitHub
+Exec=uni-ui
+Icon=uni
+Terminal=false
+Categories=System;PackageManager;Utility;
+Keywords=package;install;apt;flatpak;snap;github;
+StartupNotify=true
+StartupWMClass=uni-ui

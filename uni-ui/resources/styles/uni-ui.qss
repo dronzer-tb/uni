@@ -1,0 +1,154 @@
+/* uni-ui — industrial terminal-glass palette (PRD §6) */
+
+QWidget {
+    background-color: #0d0f12;
+    color: #e2e8f0;
+    font-family: "IBM Plex Sans", "Inter", "Segoe UI", sans-serif;
+    font-size: 13px;
+}
+
+QMainWindow {
+    background-color: #0d0f12;
+}
+
+QStatusBar {
+    background-color: #0d0f12;
+    color: #64748b;
+    border-top: 1px solid #252a38;
+}
+
+#StatusLabel {
+    color: #64748b;
+    padding: 4px 10px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+}
+
+#SearchBar {
+    background-color: #141720;
+    color: #e2e8f0;
+    border: 1px solid #252a38;
+    padding: 10px 14px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 15px;
+    selection-background-color: #1c2030;
+}
+
+#SearchBar:focus {
+    border: 1px solid #22d3ee;
+}
+
+#ResultsView {
+    background-color: #141720;
+    border: 1px solid #252a38;
+    color: #e2e8f0;
+    outline: 0;
+}
+
+#ResultsView::item:selected {
+    background-color: #1c2030;
+    color: #e2e8f0;
+}
+
+#PackageDetailPane {
+    background-color: #141720;
+    border: 1px solid #252a38;
+    border-left: 1px solid #252a38;
+}
+
+#DetailName {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 18px;
+    font-weight: 600;
+    color: #e2e8f0;
+}
+
+#DetailVersion {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 13px;
+    color: #94a3b8;
+}
+
+#DetailDescription {
+    color: #e2e8f0;
+    line-height: 1.45;
+}
+
+#DetailMeta {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    color: #64748b;
+}
+
+#DetailDivider {
+    color: #252a38;
+}
+
+#SourcePicker, #SourcePicker QAbstractItemView {
+    background-color: #1c2030;
+    color: #e2e8f0;
+    border: 1px solid #252a38;
+    padding: 6px 8px;
+}
+
+#InstallButton {
+    background-color: #22d3ee;
+    color: #0d0f12;
+    border: none;
+    padding: 10px 16px;
+    font-weight: 600;
+    font-family: "IBM Plex Mono", monospace;
+}
+
+#InstallButton:hover  { background-color: #67e8f9; }
+#InstallButton:pressed{ background-color: #06b6d4; }
+
+#DownloadQueue {
+    background-color: #141720;
+    border: 1px solid #252a38;
+}
+
+#DownloadCard {
+    background-color: #1c2030;
+    border: 1px solid #252a38;
+}
+
+#DownloadTitle {
+    font-family: "IBM Plex Mono", monospace;
+    color: #e2e8f0;
+}
+
+#DownloadStatus {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    color: #94a3b8;
+}
+
+QProgressBar {
+    background-color: #0d0f12;
+    border: 1px solid #252a38;
+}
+QProgressBar::chunk {
+    background-color: #22d3ee;
+}
+
+QSplitter::handle {
+    background-color: #0d0f12;
+}
+QSplitter::handle:horizontal {
+    width: 1px;
+}
+
+QScrollBar:vertical {
+    background: #0d0f12;
+    width: 10px;
+    margin: 0;
+}
+QScrollBar::handle:vertical {
+    background: #252a38;
+    min-height: 24px;
+}
+QScrollBar::handle:vertical:hover {
+    background: #1c2030;
+}
+QScrollBar::add-line, QScrollBar::sub-line { height: 0; }

@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh uni package index
+Documentation=https://github.com/dronzer-tb/UNI
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/uni index --refresh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+# Don't fail boot/timer if the user hasn't installed uni yet
+SuccessExitStatus=0 127

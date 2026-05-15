@@ -1,0 +1,13 @@
+[Unit]
+Description=Refresh uni package index every 6 hours
+Documentation=https://github.com/dronzer-tb/UNI
+
+[Timer]
+# Fire 2 minutes after login, then every 6 hours.
+OnStartupSec=2min
+OnUnitActiveSec=6h
+Persistent=true
+Unit=uni-index.service
+
+[Install]
+WantedBy=timers.target
